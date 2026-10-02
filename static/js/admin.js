@@ -28,6 +28,25 @@
     setTimeout(() => location.reload(), 700);
   });
 
+  document.getElementById("templateForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("templateFile");
+    if (!fileInput.files?.length) {
+      toast("اختر ملف pptx", "error");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("template", fileInput.files[0]);
+    const res = await fetch("/api/admin/upload-template", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!data.ok) {
+      toast(data.error || "فشل رفع القالب", "error");
+      return;
+    }
+    toast("تم رفع القالب بنجاح");
+    setTimeout(() => location.reload(), 800);
+  });
+
   document.getElementById("createForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const display_name = document.getElementById("newName").value.trim();

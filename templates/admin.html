@@ -21,7 +21,7 @@
       </div>
     </div>
     <div class="top-actions">
-      <span class="file-badge">القالب: {{ master_name or 'غير موجود' }}</span>
+      <span class="file-badge">القالب: {{ master_name or 'غير مرفوع بعد' }}</span>
       <a class="btn ghost" href="/admin/logout">خروج</a>
     </div>
   </header>
@@ -78,6 +78,24 @@
       </form>
     </section>
     {% endif %}
+
+    <section class="panel active" id="templateAdmin" style="margin-bottom:1rem" {% if must_change_password %}hidden{% endif %}>
+      <div class="panel-head row">
+        <div>
+          <h2>قالب PowerPoint الرئيسي</h2>
+          <p>ارفع ملف التقرير `.pptx` هنا مرة واحدة (مطلوب على الاستضافة لأن القالب غير موجود في GitHub).</p>
+        </div>
+      </div>
+      <form id="templateForm" class="form-grid" enctype="multipart/form-data">
+        <label class="field full">
+          <span>ملف القالب (.pptx)</span>
+          <input id="templateFile" type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" required />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn soft">رفع القالب</button>
+        </div>
+      </form>
+    </section>
 
     <section class="panel active" id="mainAdmin" {% if must_change_password %}hidden{% endif %}>
       <div class="panel-head row">

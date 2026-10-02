@@ -12,10 +12,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
+import os
+import secrets
+import sqlite3
+import string
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Iterator
+
+# على Render ضع Persistent Disk على /var/data وEnvironment: DATA_DIR=/var/data
 BASE = Path(__file__).resolve().parent
-DATA_DIR = BASE / "data"
-USERS_DIR = BASE / "users"
-MASTER_DIR = BASE / "master_templates"
+DATA_ROOT = Path(os.environ.get("DATA_DIR", str(BASE)))
+DATA_DIR = DATA_ROOT / "data"
+USERS_DIR = DATA_ROOT / "users"
+MASTER_DIR = DATA_ROOT / "master_templates"
 DB_PATH = DATA_DIR / "app.db"
 
 # كلمة مرور لوحة الإدارة (يمكن تغييرها من الواجهة لاحقاً عبر الإعدادات)

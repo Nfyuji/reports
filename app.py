@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 import uuid
 from functools import wraps
@@ -26,7 +27,10 @@ BASE = Path(__file__).resolve().parent
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024
-app.secret_key = secrets.token_hex(32)
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# تهيئة قاعدة البيانات عند تشغيل gunicorn أيضاً
+auth_store.init_db()
 
 # صور كل مستخدم منفصلة: user_id -> {photo_id: (bytes, ext, name)}
 PHOTO_STORES: dict[int, dict[str, tuple[bytes, str, str]]] = {}
@@ -179,6 +183,22 @@ def api_admin_change_password():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/api/admin/upload-template", methods=["POST"])
+@admin_required
+def api_admin_upload_template():
+    """رفع قالب PowerPoint الرئيسي (مهم على Render لأن القالب غير موجود في Git)."""
+    f = request.files.get("template")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "اختر ملف pptx"}), 400
+    if not f.filename.lower().endswith(".pptx"):
+        return jsonify({"ok": False, "error": "الملف يجب أن يكون .pptx"}), 400
+
+    auth_store.ensure_dirs()
+    dest = auth_store.MASTER_DIR / "قالب_التقرير_الفني.pptx"
+    f.save(dest)
+    return jsonify({"ok": True, "filename": dest.name, "size": dest.stat().st_size})
 
 
 @app.route("/admin/logout")
@@ -408,12 +428,12 @@ def api_admin_reset_report(user_id: int):
 
 if __name__ == "__main__":
     auth_store.init_db()
-    # حضّر القالب الرئيسي من ملفات المشروع إن لزم
     auth_store.master_template_path()
+    port = int(os.environ.get("PORT", "5055"))
     print("=" * 56)
     print(" محرر التقارير الفنية — اشتراك شهري")
-    print(" دخول المستخدم:  http://127.0.0.1:5055/login")
-    print(" لوحة الإدارة:   http://127.0.0.1:5055/admin/login")
+    print(f" دخول المستخدم:  http://127.0.0.1:{port}/login")
+    print(f" لوحة الإدارة:   http://127.0.0.1:{port}/admin/login")
     print(f" كلمة مرور الأدمن الافتراضية: {auth_store.DEFAULT_ADMIN_PASSWORD}")
     print("=" * 56)
-    app.run(host="127.0.0.1", port=5055, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)

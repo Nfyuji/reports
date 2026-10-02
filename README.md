@@ -20,8 +20,23 @@ python app.py
 4. يعدّل ويحفظ ويحمّل تقريره فقط — ما يشوف ولا يأثر على باقي المشتركين.
 5. بعد انتهاء الشهر يُوقف الدخول حتى تجدّد الاشتراك من الإدارة.
 
+## التشغيل على Render
+
+في شاشة New Web Service عبّئ:
+
+| الحقل | القيمة |
+|--------|--------|
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120` |
+
+Environment Variables:
+- `SECRET_KEY` = أي نص عشوائي طويل
+- `DATA_DIR` = `/var/data` (إذا أضفت Persistent Disk)
+
+بعد أول نشر: ادخل `/admin/login` → غيّر كلمة المرور → ارفع قالب `.pptx` من لوحة الإدارة.
+
 ## مجلدات مهمة
 
-- `master_templates/` — القالب الأصلي (محلي، غير مرفوع على GitHub بسبب الحجم). ضع ملف `.pptx` هنا قبل التشغيل.
+- `master_templates/` — القالب الأصلي (محلي أو يُرفع من لوحة الإدارة على الاستضافة)
 - `users/<id>/report.pptx` — نسخة كل مستخدم
 - `data/app.db` — قاعدة المشتركين والاشتراكات
