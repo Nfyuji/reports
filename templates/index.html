@@ -21,7 +21,8 @@
         <p class="brand-sub">مساحتك الخاصة — تعديلات منفصلة عن باقي المشتركين</p>
       </div>
     </div>
-    <div class="top-actions">
+    <button type="button" class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="topActions" aria-label="فتح القائمة">☰</button>
+    <div class="top-actions" id="topActions">
       <span class="user-chip" title="اشتراكك">
         {{ user_name }} · باقي {{ days_left }} يوم
       </span>
@@ -117,6 +118,7 @@
     <p>جاري الحفظ على نسختك الخاصة…</p>
   </div>
 
+  <script src="/static/js/nav.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>

@@ -20,7 +20,8 @@
         <p class="brand-sub">إنشاء أرقام دخول ونسخ منفصلة لكل مستخدم</p>
       </div>
     </div>
-    <div class="top-actions">
+    <button type="button" class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="topActions" aria-label="فتح القائمة">☰</button>
+    <div class="top-actions" id="topActions">
       <span class="file-badge">القالب: {{ master_name or 'غير مرفوع بعد' }}</span>
       <a class="btn ghost" href="/admin/logout">خروج</a>
     </div>
@@ -170,6 +171,7 @@
   </main>
 
   <div class="toast" id="toast" hidden></div>
+  <script src="/static/js/nav.js"></script>
   <script src="/static/js/admin.js"></script>
 </body>
 </html>
