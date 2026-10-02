@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>دخول — محرر التقارير الفنية</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/auth.css" />
+</head>
+<body class="auth-body">
+  <div class="ambient" aria-hidden="true"></div>
+  <main class="auth-card">
+    <div class="brand brand-center">
+      <span class="brand-mark"></span>
+      <div>
+        <h1>محرر التقارير الفنية</h1>
+        <p class="brand-sub">ادخل برقم الاشتراك الخاص بك</p>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" class="auth-form" autocomplete="off">
+      <label class="field">
+        <span>رقم الاشتراك</span>
+        <input name="access_code" type="text" inputmode="numeric" placeholder="مثال: 48291763" required autofocus />
+      </label>
+      <button type="submit" class="btn primary full">دخول إلى مساحتي</button>
+    </form>
+
+    <p class="auth-note">كل مستخدم له نسخة تقرير خاصة به — تعديلاتك لا تظهر لغيرك.</p>
+    <p class="auth-note muted"><a href="/admin/login">دخول الإدارة</a></p>
+  </main>
+</body>
+</html>

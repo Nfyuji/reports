@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>محرر التقارير الفنية</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/auth.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <h1>محرر التقارير الفنية</h1>
+        <p class="brand-sub">مساحتك الخاصة — تعديلات منفصلة عن باقي المشتركين</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="user-chip" title="اشتراكك">
+        {{ user_name }} · باقي {{ days_left }} يوم
+      </span>
+      <span id="fileBadge" class="file-badge">جاري التحميل…</span>
+      <button type="button" class="btn ghost" id="btnReload">تحديث</button>
+      <button type="button" class="btn ghost" id="btnDownload">تحميل الملف</button>
+      <button type="button" class="btn primary" id="btnSave">حفظ على نسختي</button>
+      <a class="btn ghost" href="/logout">خروج</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <nav class="steps" aria-label="أقسام التقرير">
+      <button class="step active" data-panel="cover"><span>01</span> بيانات الغلاف</button>
+      <button class="step" data-panel="notes"><span>02</span> الملاحظات</button>
+      <button class="step" data-panel="photos"><span>03</span> الصور</button>
+    </nav>
+
+    <section class="panel active" id="panel-cover">
+      <div class="panel-head">
+        <h2>بيانات بداية التقرير</h2>
+        <p>الاسم، المدرسة، الرقم الوزاري، والتاريخ — تُكتب مباشرة في الشريحة الأولى.</p>
+      </div>
+      <form class="form-grid" id="coverForm" autocomplete="off">
+        <label class="field full">
+          <span>عنوان التقرير</span>
+          <input name="title" id="fTitle" type="text" />
+        </label>
+        <label class="field">
+          <span>اسم المدرسة</span>
+          <input name="school" id="fSchool" type="text" />
+        </label>
+        <label class="field">
+          <span>الرقم الوزاري</span>
+          <input name="ministry_no" id="fMinistry" type="text" />
+        </label>
+        <label class="field">
+          <span>التاريخ</span>
+          <input name="date" id="fDate" type="text" placeholder="مثال: 1/10/2026" />
+        </label>
+        <label class="field">
+          <span>اسم المهندس / المعد</span>
+          <input name="engineer" id="fEngineer" type="text" placeholder="مثال: م. بندر يحيى" />
+        </label>
+      </form>
+    </section>
+
+    <section class="panel" id="panel-notes">
+      <div class="panel-head row">
+        <div>
+          <h2>إجمالي الملاحظات</h2>
+          <p>أضف أو عدّل أو أعد ترتيب الملاحظات — تظهر كقائمة في الشريحة الثانية.</p>
+        </div>
+        <button type="button" class="btn soft" id="btnAddNote">+ ملاحظة جديدة</button>
+      </div>
+      <ul class="notes-list" id="notesList"></ul>
+    </section>
+
+    <section class="panel" id="panel-photos">
+      <div class="panel-head row">
+        <div>
+          <h2>صور الملاحظات والمبنى</h2>
+          <p>اختر الصور فقط — كل <strong>6 صور</strong> تأخذ شريحة جديدة تلقائياً، وآخر شريحة فيها بعدد الصور فقط بدون خانات فاضية.</p>
+        </div>
+        <div class="photo-actions">
+          <label class="btn soft file-btn">
+            اختيار صور
+            <input type="file" id="photoInput" accept="image/*" multiple hidden />
+          </label>
+          <button type="button" class="btn ghost danger" id="btnClearPhotos">مسح الكل</button>
+        </div>
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <div class="drop-inner">
+          <strong>اسحب الصور هنا</strong>
+          <span>أو استخدم زر اختيار الصور — يمكنك إعادة الترتيب بالسحب</span>
+        </div>
+      </div>
+
+      <div class="photo-meta">
+        <span id="photoCount">0 صورة</span>
+        <span id="slideEstimate">= 0 شريحة صور</span>
+      </div>
+
+      <div class="photo-grid" id="photoGrid"></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+  <div class="saving" id="saving" hidden aria-live="polite">
+    <div class="spinner"></div>
+    <p>جاري الحفظ على نسختك الخاصة…</p>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

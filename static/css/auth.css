@@ -1,0 +1,121 @@
+.auth-body {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.6rem 1.5rem 1.4rem;
+  backdrop-filter: blur(10px);
+  animation: rise 0.45s ease both;
+}
+
+.brand-center {
+  justify-content: center;
+  text-align: center;
+  margin-bottom: 1.2rem;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.btn.full { width: 100%; }
+
+.auth-error {
+  background: rgba(139, 58, 58, 0.1);
+  color: #8b3a3a;
+  border: 1px solid rgba(139, 58, 58, 0.2);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.9rem;
+  font-weight: 700;
+}
+
+.auth-note {
+  margin: 1rem 0 0;
+  text-align: center;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.auth-note.muted { opacity: 0.8; font-size: 0.85rem; }
+.auth-note a { color: var(--navy); font-weight: 700; }
+
+.created-box {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(111, 145, 124, 0.14);
+  border: 1px solid rgba(111, 145, 124, 0.35);
+  line-height: 1.8;
+}
+
+.created-box code {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--navy-deep);
+  margin-left: 0.4rem;
+}
+
+.admin-layout { width: min(1100px, calc(100% - 2rem)); }
+
+.table-wrap {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.admin-table th,
+.admin-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.7rem 0.5rem;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.admin-table th {
+  color: var(--navy);
+  font-weight: 800;
+}
+
+.admin-table code {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--navy-deep);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.actions .btn {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+.warn-panel {
+  border-color: rgba(180, 120, 40, 0.35);
+  background: rgba(255, 244, 220, 0.75);
+  margin-bottom: 1rem;
+}
+

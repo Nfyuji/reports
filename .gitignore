@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# App runtime data (لا تُرفع — خاصة بكل جهاز)
+data/
+users/
+_uploads/
+*.tmp.pptx
+~$*
+_نسخة_*/
+
+# قوالب PowerPoint الكبيرة (تبقى محلياً)
+*.pptx
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

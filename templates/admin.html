@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>لوحة الإدارة — الاشتراكات</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/auth.css" />
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <h1>إدارة الاشتراكات</h1>
+        <p class="brand-sub">إنشاء أرقام دخول ونسخ منفصلة لكل مستخدم</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="file-badge">القالب: {{ master_name or 'غير موجود' }}</span>
+      <a class="btn ghost" href="/admin/logout">خروج</a>
+    </div>
+  </header>
+
+  <main class="layout admin-layout">
+    {% if must_change_password %}
+    <section class="panel active warn-panel" id="passwordPanel">
+      <div class="panel-head">
+        <h2>غيّر كلمة مرور الإدارة الآن</h2>
+        <p>لسا تستخدم الكلمة الافتراضية — لازم تغيّرها قبل ما تكمل.</p>
+      </div>
+      <form id="passwordForm" class="form-grid" autocomplete="off">
+        <label class="field">
+          <span>كلمة المرور الحالية</span>
+          <input id="pwCurrent" type="password" value="admin2026" required />
+        </label>
+        <label class="field">
+          <span>كلمة المرور الجديدة</span>
+          <input id="pwNew" type="password" minlength="6" placeholder="6 أحرف على الأقل" required />
+        </label>
+        <label class="field full">
+          <span>تأكيد الكلمة الجديدة</span>
+          <input id="pwConfirm" type="password" minlength="6" required />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn primary">حفظ كلمة المرور الجديدة</button>
+        </div>
+      </form>
+    </section>
+    {% else %}
+    <section class="panel active" id="passwordPanel" style="margin-bottom:1rem">
+      <div class="panel-head row">
+        <div>
+          <h2>تغيير كلمة مرور الإدارة</h2>
+          <p>اختياري — يمكنك تحديثها في أي وقت.</p>
+        </div>
+      </div>
+      <form id="passwordForm" class="form-grid" autocomplete="off">
+        <label class="field">
+          <span>كلمة المرور الحالية</span>
+          <input id="pwCurrent" type="password" required />
+        </label>
+        <label class="field">
+          <span>كلمة المرور الجديدة</span>
+          <input id="pwNew" type="password" minlength="6" required />
+        </label>
+        <label class="field full">
+          <span>تأكيد الكلمة الجديدة</span>
+          <input id="pwConfirm" type="password" minlength="6" required />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn soft">تحديث كلمة المرور</button>
+        </div>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="panel active" id="mainAdmin" {% if must_change_password %}hidden{% endif %}>
+      <div class="panel-head row">
+        <div>
+          <h2>إنشاء اشتراك جديد</h2>
+          <p>يُنشأ رقم دخول ويُنسخ قالب التقرير لمساحة خاصة بالمستخدم من أول مرة.</p>
+        </div>
+      </div>
+      <form id="createForm" class="form-grid" autocomplete="off">
+        <label class="field">
+          <span>اسم المستخدم / المهندس</span>
+          <input id="newName" type="text" placeholder="مثال: م. بندر يحيى" required />
+        </label>
+        <label class="field">
+          <span>مدة الاشتراك (بالأشهر)</span>
+          <input id="newMonths" type="number" min="1" max="24" value="1" required />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn primary">إنشاء رقم اشتراك</button>
+        </div>
+      </form>
+      <div id="createdBox" class="created-box" hidden>
+        <strong>تم الإنشاء</strong>
+        <p>الاسم: <span id="cName"></span></p>
+        <p>رقم الاشتراك: <code id="cCode"></code>
+          <button type="button" class="btn soft" id="btnCopy">نسخ</button>
+        </p>
+        <p>ينتهي في: <span id="cExp"></span></p>
+      </div>
+    </section>
+
+    <section class="panel active" id="usersAdmin" style="margin-top:1rem" {% if must_change_password %}hidden{% endif %}>
+      <div class="panel-head">
+        <h2>المشتركون</h2>
+        <p>كل رقم له نسخة تقرير منفصلة — لا يرى أحد تغييرات الآخر.</p>
+      </div>
+      <div class="table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>الاسم</th>
+              <th>رقم الاشتراك</th>
+              <th>ينتهي</th>
+              <th>متبقي</th>
+              <th>الحالة</th>
+              <th>آخر دخول</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody id="usersBody">
+            {% for u in users %}
+            <tr data-id="{{ u.id }}">
+              <td>{{ u.display_name }}</td>
+              <td><code>{{ u.access_code }}</code></td>
+              <td>{{ u.expires_at }}</td>
+              <td>{% if u.expired %}منتهي{% else %}{{ u.days_left }} يوم{% endif %}</td>
+              <td>{% if not u.active %}موقوف{% elif u.expired %}منتهي{% else %}نشط{% endif %}</td>
+              <td>{{ u.last_login_at or '—' }}</td>
+              <td class="actions">
+                <button type="button" class="btn soft btn-renew" data-id="{{ u.id }}">تجديد شهر</button>
+                <button type="button" class="btn ghost btn-toggle" data-id="{{ u.id }}">{% if u.active %}إيقاف{% else %}تفعيل{% endif %}</button>
+                <button type="button" class="btn ghost danger btn-reset" data-id="{{ u.id }}">إعادة قالب</button>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">لا يوجد مشتركون بعد.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="/static/js/admin.js"></script>
+</body>
+</html>
