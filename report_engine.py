@@ -77,6 +77,14 @@ def _set_run_text(run, text: str) -> None:
     run.text = text
 
 
+def today_date_str() -> str:
+    """تاريخ اليوم بصيغة d/m/yyyy مثل القالب."""
+    from datetime import datetime
+
+    now = datetime.now()
+    return f"{now.day}/{now.month}/{now.year}"
+
+
 def _parse_cover(prs: Presentation) -> dict[str, str]:
     slide = prs.slides[0]
     title = ""
@@ -89,25 +97,35 @@ def _parse_cover(prs: Presentation) -> dict[str, str]:
         if not shape.has_text_frame:
             continue
         if shape.name == "TextBox 2":
-            title = shape.text_frame.paragraphs[0].runs[0].text if shape.text_frame.paragraphs[0].runs else shape.text
+            title = (
+                shape.text_frame.paragraphs[0].runs[0].text
+                if shape.text_frame.paragraphs[0].runs
+                else shape.text
+            )
         elif shape.name == "TextBox 3":
-            paras = shape.text_frame.paragraphs
-            if len(paras) >= 1 and len(paras[0].runs) >= 3:
-                school = paras[0].runs[2].text.strip()
-            if len(paras) >= 2 and len(paras[1].runs) >= 3:
-                ministry_no = paras[1].runs[2].text.strip()
-            if len(paras) >= 3 and len(paras[2].runs) >= 2:
-                date = paras[2].runs[1].text.strip()
-            # سطر المهندس: إما تشغيل واحد «اسم المهندس :...» أو 3 تشغيلات
-            for p in paras:
+            for p in shape.text_frame.paragraphs:
                 joined = "".join(r.text for r in p.runs).strip()
-                if "مهندس" not in joined and "المعد" not in joined:
+                if not joined:
                     continue
-                if ":" in joined:
-                    engineer = joined.split(":", 1)[1].strip()
-                elif len(p.runs) >= 3:
-                    engineer = p.runs[2].text.strip()
-                break
+                low = joined.replace(" ", "")
+                if joined.startswith("اسم المدرسة") or "اسم المدرسة" in joined[:20]:
+                    school = joined.split(":", 1)[1].strip() if ":" in joined else school
+                elif "الرقم الوزاري" in joined:
+                    ministry_no = joined.split(":", 1)[1].strip() if ":" in joined else ministry_no
+                elif "مشرف" in joined or "مهندس" in joined or "المعد" in joined:
+                    engineer = joined.split(":", 1)[1].strip() if ":" in joined else engineer
+                elif joined.startswith("التاريخ") or "التاريخ" in joined[:12]:
+                    date = joined.split(":", 1)[1].strip() if ":" in joined else date
+
+            # توافق مع القالب القديم (تشغيلات منفصلة)
+            paras = shape.text_frame.paragraphs
+            if not school and len(paras) >= 1 and len(paras[0].runs) >= 3:
+                school = paras[0].runs[2].text.strip()
+            if not ministry_no and len(paras) >= 2 and len(paras[1].runs) >= 3:
+                ministry_no = paras[1].runs[2].text.strip()
+
+    if not date:
+        date = today_date_str()
 
     return {
         "title": title.strip() or "التقرير الفني لحالة المبنى",
@@ -116,6 +134,102 @@ def _parse_cover(prs: Presentation) -> dict[str, str]:
         "date": date,
         "engineer": engineer,
     }
+
+
+def _set_single_line_paragraph(p_el, line: str, template_p) -> None:
+    """يجعل الفقرة تشغيلاً واحداً بنص كامل مع RTL مثل القالب."""
+    # امسح التشغيلات الحالية
+    for child in list(p_el):
+        if etree.QName(child).localname == "r":
+            p_el.remove(child)
+
+    # خذ rPr من القالب إن أمكن
+    src_r = None
+    if template_p is not None:
+        runs = template_p.findall(qn("a:r"))
+        if runs:
+            src_r = runs[0]
+
+    r = etree.SubElement(p_el, qn("a:r"))
+    if src_r is not None and src_r.find(qn("a:rPr")) is not None:
+        rPr = copy.deepcopy(src_r.find(qn("a:rPr")))
+        r.insert(0, rPr)
+    else:
+        rPr = etree.SubElement(r, qn("a:rPr"))
+        rPr.set("lang", "ar-SA")
+        rPr.set("sz", "4165")
+        solid = etree.SubElement(rPr, qn("a:solidFill"))
+        etree.SubElement(solid, qn("a:srgbClr")).set("val", "083144")
+        for tag in ("latin", "ea", "cs"):
+            etree.SubElement(rPr, qn(f"a:{tag}")).set("typeface", "Tajawal")
+        etree.SubElement(rPr, qn("a:rtl"))
+
+    if rPr.find(qn("a:rtl")) is None:
+        etree.SubElement(rPr, qn("a:rtl"))
+    rPr.set("lang", "ar-SA")
+
+    t = etree.SubElement(r, qn("a:t"))
+    t.text = line
+
+    pPr = p_el.find(qn("a:pPr"))
+    if pPr is None:
+        pPr = etree.Element(qn("a:pPr"))
+        p_el.insert(0, pPr)
+    pPr.set("algn", "r")
+    pPr.set("rtl", "1")
+
+
+def _rebuild_cover_details(shape, cover: dict[str, str]) -> None:
+    """
+    يعيد بناء مربع التفاصيل بالترتيب:
+    المدرسة → الرقم الوزاري → المشرف → التاريخ
+    """
+    tf = shape.text_frame
+    if not tf.paragraphs:
+        return
+
+    school = (cover.get("school") or "").strip()
+    ministry = (cover.get("ministry_no") or "").strip()
+    supervisor = (cover.get("engineer") or "").strip()
+    date = (cover.get("date") or "").strip() or today_date_str()
+
+    lines = [
+        f"اسم المدرسة :{school}",
+        f"الرقم الوزاري :{ministry}",
+        f"المشرف :{supervisor}",
+        f"التاريخ:{date}",
+    ]
+
+    template_p = tf.paragraphs[0]._p
+    body = tf._txBody
+
+    # احذف كل الفقرات
+    for child in list(body):
+        if etree.QName(child).localname == "p":
+            body.remove(child)
+
+    for line in lines:
+        new_p = copy.deepcopy(template_p)
+        _set_single_line_paragraph(new_p, line, template_p)
+        body.append(new_p)
+
+
+def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
+    slide = prs.slides[0]
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        if shape.name == "TextBox 2":
+            if shape.text_frame.paragraphs[0].runs:
+                _set_run_text(
+                    shape.text_frame.paragraphs[0].runs[0],
+                    cover.get("title", "").strip() or "التقرير الفني لحالة المبنى",
+                )
+        elif shape.name == "TextBox 3":
+            data = dict(cover)
+            if not (data.get("date") or "").strip():
+                data["date"] = today_date_str()
+            _rebuild_cover_details(shape, data)
 
 
 def _paragraph_plain_text(p_el) -> str:
@@ -145,8 +259,8 @@ def _extract_observations_from_xml(slide_xml: bytes) -> list[str]:
         )
 
     for p in paragraphs:
-        text = _paragraph_plain_text(p)
-        if text:
+        text = _clean_observation_text(_paragraph_plain_text(p))
+        if text and text not in {"إجمالي الملاحظات", "\u00a0"}:
             notes.append(text)
 
     if notes:
@@ -233,8 +347,16 @@ def _find_notes_txbody(root):
     return results
 
 
+def _clean_observation_text(text: str) -> str:
+    """يزيل رموز النقاط/الترقيم من بداية الملاحظة (النقطة تُضاف في الشريحة)."""
+    t = (text or "").strip()
+    t = re.sub(r"^[\-\u2022\u25CF\u25A0\u25BA\u2023\*\u00A7\u00B7\.]+\s*", "", t)
+    t = re.sub(r"^\d+[\.\)\-\u060C،]\s*", "", t)
+    return t.strip()
+
+
 def _write_observations_xml(slide_part, observations: list[str]) -> None:
-    """يستبدل فقرات الملاحظات داخل مربع النص (AlternateContent)."""
+    """يستبدل فقرات الملاحظات كنقاط (رصاصات) داخل مربع النص في الشريحة الثانية."""
     # أعِد التحليل بـ lxml لضمان تعديل موثوق ثم أعد الحقن في الجزء
     xml_bytes = slide_part.blob
     root = etree.fromstring(xml_bytes)
@@ -243,7 +365,11 @@ def _write_observations_xml(slide_part, observations: list[str]) -> None:
     if not tx_bodies:
         raise RuntimeError("تعذر العثور على مربع الملاحظات في الشريحة الثانية.")
 
-    clean = [o.strip() for o in observations if o and o.strip()]
+    clean = []
+    for o in observations:
+        note = _clean_observation_text(str(o))
+        if note:
+            clean.append(note)
     if not clean:
         clean = ["لا توجد ملاحظات"]
 
@@ -252,6 +378,7 @@ def _write_observations_xml(slide_part, observations: list[str]) -> None:
             if etree.QName(child).localname == "p":
                 txBody.remove(child)
         for note in clean:
+            # كل ملاحظة = فقرة بنقطة (buChar) مثل القالب
             txBody.append(_obs_paragraph_xml(note))
 
     new_xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
@@ -362,86 +489,6 @@ def load_report(pptx_path: Path | None = None) -> dict[str, Any]:
         "photo_count": len(photos),
         "slide_count": len(prs.slides),
     }
-
-
-def _ensure_engineer_paragraph(shape, engineer: str) -> None:
-    """
-    يضيف سطر المهندس بنسخ فقرة المدرسة حرفياً، لكن كنص واحد في تشغيل واحد
-    حتى لا يعكس PowerPoint الاسم بسبب خلط اتجاه التشغيلات.
-    الشكل النهائي: «اسم المهندس :ضاوي» بنفس اتجاه باقي الحقول.
-    """
-    tf = shape.text_frame
-    value = (engineer or "").strip()
-    line = f"اسم المهندس :{value}" if value else ""
-
-    # احذف أي سطر مهندس قديم (حتى لو باتجاه خاطئ)
-    for p in list(tf.paragraphs):
-        joined = "".join(r.text for r in p.runs)
-        if "مهندس" in joined or "المعد" in joined:
-            el = p._p
-            parent = el.getparent()
-            if parent is not None:
-                parent.remove(el)
-
-    if not value or not tf.paragraphs:
-        return
-
-    template_p = tf.paragraphs[0]._p
-    new_p = copy.deepcopy(template_p)
-
-    # اجعلها تشغيلاً واحداً فقط (انسخ تنسيق أول run)
-    runs = new_p.findall(qn("a:r"))
-    if not runs:
-        return
-
-    first = runs[0]
-    t = first.find(qn("a:t"))
-    if t is None:
-        t = etree.SubElement(first, qn("a:t"))
-    t.text = line
-
-    # تأكد من rtl على التشغيل
-    rPr = first.find(qn("a:rPr"))
-    if rPr is None:
-        rPr = etree.SubElement(first, qn("a:rPr"))
-    if rPr.find(qn("a:rtl")) is None:
-        etree.SubElement(rPr, qn("a:rtl"))
-    rPr.set("lang", "ar-SA")
-
-    for extra in runs[1:]:
-        new_p.remove(extra)
-
-    # تأكد من rtl على الفقرة
-    pPr = new_p.find(qn("a:pPr"))
-    if pPr is None:
-        pPr = etree.Element(qn("a:pPr"))
-        new_p.insert(0, pPr)
-    pPr.set("algn", "r")
-    pPr.set("rtl", "1")
-
-    tf._txBody.append(new_p)
-
-
-def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
-    slide = prs.slides[0]
-    for shape in slide.shapes:
-        if not shape.has_text_frame:
-            continue
-        if shape.name == "TextBox 2":
-            if shape.text_frame.paragraphs[0].runs:
-                _set_run_text(shape.text_frame.paragraphs[0].runs[0], cover.get("title", "").strip())
-        elif shape.name == "TextBox 3":
-            paras = shape.text_frame.paragraphs
-            if len(paras) >= 1 and len(paras[0].runs) >= 3:
-                _set_run_text(paras[0].runs[2], cover.get("school", "").strip())
-            if len(paras) >= 2 and len(paras[1].runs) >= 3:
-                _set_run_text(paras[1].runs[2], cover.get("ministry_no", "").strip())
-            if len(paras) >= 3:
-                if len(paras[2].runs) >= 2:
-                    _set_run_text(paras[2].runs[1], cover.get("date", "").strip())
-                elif len(paras[2].runs) == 1:
-                    _set_run_text(paras[2].runs[0], f"التاريخ:{cover.get('date', '').strip()}")
-            _ensure_engineer_paragraph(shape, cover.get("engineer", ""))
 
 
 def _update_photo_title(slide, title: str = PHOTO_TITLE) -> None:

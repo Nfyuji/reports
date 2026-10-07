@@ -47,6 +47,23 @@
     setTimeout(() => location.reload(), 800);
   });
 
+  document.getElementById("geminiForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const api_key = document.getElementById("geminiKey").value.trim();
+    const res = await fetch("/api/admin/gemini-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      toast(data.error || "فشل الحفظ", "error");
+      return;
+    }
+    toast(api_key ? "تم حفظ مفتاح Gemini" : "تم مسح المفتاح");
+    setTimeout(() => location.reload(), 700);
+  });
+
   document.getElementById("createForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const display_name = document.getElementById("newName").value.trim();

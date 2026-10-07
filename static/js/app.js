@@ -37,13 +37,18 @@
     });
   });
 
+  function todayDateStr() {
+    const d = new Date();
+    return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+  }
+
   function fillCover(cover) {
     state.cover = { ...cover };
     $("#fTitle").value = cover.title || "";
     $("#fSchool").value = cover.school || "";
     $("#fMinistry").value = cover.ministry_no || "";
-    $("#fDate").value = cover.date || "";
     $("#fEngineer").value = cover.engineer || "";
+    $("#fDate").value = cover.date || todayDateStr();
   }
 
   function readCover() {
@@ -51,8 +56,8 @@
       title: $("#fTitle").value.trim(),
       school: $("#fSchool").value.trim(),
       ministry_no: $("#fMinistry").value.trim(),
-      date: $("#fDate").value.trim(),
       engineer: $("#fEngineer").value.trim(),
+      date: $("#fDate").value.trim() || todayDateStr(),
     };
   }
 
@@ -68,7 +73,7 @@
       li.dataset.index = String(i);
       li.innerHTML = `
         <span class="handle" title="اسحب لإعادة الترتيب">⋮⋮</span>
-        <input type="text" value="${escapeAttr(text)}" data-i="${i}" />
+        <textarea data-i="${i}" rows="2">${escapeAttr(text)}</textarea>
         <button type="button" class="rm" title="حذف" data-rm="${i}">×</button>
       `;
       li.addEventListener("dragstart", () => {
@@ -91,7 +96,7 @@
       list.appendChild(li);
     });
 
-    list.querySelectorAll("input").forEach((inp) => {
+    list.querySelectorAll("textarea").forEach((inp) => {
       inp.addEventListener("input", () => {
         state.observations[Number(inp.dataset.i)] = inp.value;
       });
@@ -107,9 +112,94 @@
   $("#btnAddNote").addEventListener("click", () => {
     state.observations.push("");
     renderNotes();
-    const inputs = $("#notesList").querySelectorAll("input");
+    const inputs = $("#notesList").querySelectorAll("textarea");
     inputs[inputs.length - 1]?.focus();
   });
+
+  $("#btnApplyNotes")?.addEventListener("click", () => {
+    const raw = ($("#notesBulk")?.value || "").replace(/\r\n/g, "\n").trim();
+    if (!raw) {
+      toast("الصق الملاحظات أولاً", "error");
+      return;
+    }
+    const notes = raw
+      .split("\n")
+      .map((x) => x.replace(/^[\-•●▪►\d\)\(\.\s]+/, "").trim())
+      .filter(Boolean);
+    state.observations = notes;
+    renderNotes();
+    toast(`تم تطبيق ${notes.length} ملاحظة`);
+  });
+
+  $("#btnClearNotes")?.addEventListener("click", () => {
+    if (!state.observations.length) return;
+    if (confirm("مسح كل الملاحظات؟")) {
+      state.observations = [];
+      renderNotes();
+    }
+  });
+
+  async function runAiFill(localOnly) {
+    const text = ($("#aiRawText")?.value || "").trim();
+    if (!text) {
+      toast("الصق البيانات أولاً", "error");
+      return;
+    }
+    setSaving(true, localOnly ? "جاري التحليل المحلي…" : "جاري التحليل عبر Gemini…");
+    try {
+      const res = await fetch("/api/ai/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, local_only: !!localOnly, use_today_date: true }),
+      });
+      if (res.status === 401) {
+        location.href = "/login";
+        return;
+      }
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "فشل التحليل");
+      const cover = data.cover || {};
+      cover.date = todayDateStr();
+      fillCover(cover);
+      if (Array.isArray(data.observations) && data.observations.length) {
+        state.observations = data.observations
+          .map((x) => String(x).replace(/^[\-•●▪►§·\*\d\)\(\.\s]+/, "").trim())
+          .filter(Boolean);
+        renderNotes();
+        if ($("#notesBulk")) {
+          $("#notesBulk").value = state.observations.join("\n");
+        }
+      }
+      // حفظ مباشر → الشريحة الثانية تُحدَّث كنقاط في الملف
+      setSaving(true, "جاري حفظ الملاحظات كنقاط في الشريحة الثانية…");
+      const saveRes = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cover: readCover(),
+          observations: state.observations.map((t) => t.trim()).filter(Boolean),
+          photo_ids: state.photos.map((p) => p.id),
+        }),
+      });
+      if (saveRes.status === 401) {
+        location.href = "/login";
+        return;
+      }
+      const saved = await saveRes.json();
+      if (!saved.ok) throw new Error(saved.error || "فشل الحفظ");
+      state.filename = saved.filename;
+      $("#fileBadge").textContent = "نسختي: " + saved.filename;
+      const src = data.source === "gemini" ? "Gemini" : "محلي";
+      toast(`تم التحديث (${src}) — ${state.observations.length} نقطة في الشريحة الثانية`);
+    } catch (err) {
+      toast(err.message || "خطأ في التعبئة", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  $("#btnAiFill")?.addEventListener("click", () => runAiFill(false));
+  $("#btnLocalFill")?.addEventListener("click", () => runAiFill(true));
 
   let dragPhotoId = null;
 
@@ -227,8 +317,13 @@
       state.path = data.path;
       $("#fileBadge").textContent = "نسختي: " + (data.filename || "report.pptx");
       fillCover(data.cover || {});
+      // دائماً تاريخ اليوم عند فتح الجلسة (يوم العمل)
+      $("#fDate").value = todayDateStr();
       state.observations = Array.isArray(data.observations) ? [...data.observations] : [];
       renderNotes();
+      if ($("#notesBulk")) {
+        $("#notesBulk").value = state.observations.join("\n");
+      }
       state.photos = (data.photos || []).map((p) => ({
         id: p.id,
         src: p.src,

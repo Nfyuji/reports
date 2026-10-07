@@ -156,14 +156,19 @@ def admin_login():
 @app.route("/admin")
 @admin_required
 def admin_panel():
+    import ai_parse
+
     users = auth_store.list_users()
     master = auth_store.master_template_path()
     must_change = auth_store.is_default_admin_password()
+    gkey = ai_parse.get_gemini_api_key()
     return render_template(
         "admin.html",
         users=users,
         master_name=master.name if master else None,
         must_change_password=must_change,
+        gemini_configured=bool(gkey),
+        gemini_masked=(gkey[:4] + "…" + gkey[-4:]) if len(gkey) > 8 else "",
     )
 
 
@@ -384,6 +389,45 @@ def api_admin_create_user():
             },
         }
     )
+
+
+@app.route("/api/ai/parse", methods=["POST"])
+@login_required
+def api_ai_parse():
+    """يلصق نص التقرير → يملأ الغلاف والملاحظات عبر Gemini أو محلياً."""
+    payload = request.get_json(force=True, silent=True) or {}
+    raw = (payload.get("text") or "").strip()
+    force_local = bool(payload.get("local_only"))
+    if not raw:
+        return jsonify({"ok": False, "error": "الصق النص أولاً"}), 400
+    try:
+        import ai_parse
+
+        result = ai_parse.parse_report_text(raw, prefer_gemini=not force_local)
+        # فرض تاريخ اليوم إذا طلب المستخدم ذلك أو كان فارغاً
+        if payload.get("use_today_date", True) or not result["cover"].get("date"):
+            from report_engine import today_date_str
+
+            result["cover"]["date"] = today_date_str()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, **result})
+
+
+@app.route("/api/admin/gemini-key", methods=["GET", "POST"])
+@admin_required
+def api_admin_gemini_key():
+    import ai_parse
+
+    if request.method == "GET":
+        key = ai_parse.get_gemini_api_key()
+        masked = (key[:4] + "…" + key[-4:]) if len(key) > 8 else ("مضبوط" if key else "")
+        return jsonify({"ok": True, "configured": bool(key), "masked": masked})
+
+    payload = request.get_json(force=True, silent=True) or {}
+    key = (payload.get("api_key") or "").strip()
+    ai_parse.set_gemini_api_key(key)
+    return jsonify({"ok": True, "configured": bool(key)})
 
 
 @app.route("/api/admin/users/<int:user_id>/renew", methods=["POST"])

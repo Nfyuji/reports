@@ -147,6 +147,23 @@ def change_admin_password(current: str, new_password: str) -> None:
     set_admin_password(new_password)
 
 
+def set_gemini_api_key(key: str) -> None:
+    init_db()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('gemini_api_key', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            ((key or "").strip(),),
+        )
+
+
+def get_setting(key: str, default: str = "") -> str:
+    init_db()
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
 def generate_access_code() -> str:
     """رقم اشتراك مثل: 48291763"""
     alphabet = string.digits

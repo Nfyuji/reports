@@ -98,6 +98,24 @@
       </form>
     </section>
 
+    <section class="panel active" id="geminiAdmin" style="margin-bottom:1rem" {% if must_change_password %}hidden{% endif %}>
+      <div class="panel-head">
+        <h2>مفتاح Gemini API</h2>
+        <p>لتعبئة الغلاف والملاحظات تلقائياً من النص الملصوق.
+          {% if gemini_configured %}الحالة: مفعّل ({{ gemini_masked }}){% else %}الحالة: غير مضبوط{% endif %}
+        </p>
+      </div>
+      <form id="geminiForm" class="form-grid" autocomplete="off">
+        <label class="field full">
+          <span>Gemini API Key</span>
+          <input id="geminiKey" type="password" placeholder="الصق المفتاح من Google AI Studio" />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn soft">حفظ مفتاح Gemini</button>
+        </div>
+      </form>
+    </section>
+
     <section class="panel active" id="mainAdmin" {% if must_change_password %}hidden{% endif %}>
       <div class="panel-head row">
         <div>

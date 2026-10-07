@@ -44,8 +44,20 @@
     <section class="panel active" id="panel-cover">
       <div class="panel-head">
         <h2>بيانات بداية التقرير</h2>
-        <p>الاسم، المدرسة، الرقم الوزاري، والتاريخ — تُكتب مباشرة في الشريحة الأولى.</p>
+        <p>الترتيب في الملف: المدرسة → الرقم الوزاري → المشرف → التاريخ. التاريخ يُضبط تلقائياً لليوم.</p>
       </div>
+
+      <div class="ai-box">
+        <label class="field full">
+          <span>الصق بيانات التقرير هنا — يملأ الغلاف ويكتب الملاحظات كنقاط في الشريحة الثانية مباشرة</span>
+          <textarea id="aiRawText" rows="8" placeholder="مثال:&#10;اسم المدرسة : ابتدائية المستقبل&#10;الرقم الوزاري :61183&#10;المشرف : ...&#10;&#10;وجود تشققات في الجدار&#10;تسرب مياه في السطح&#10;تلف في الباب الرئيسي"></textarea>
+        </label>
+        <div class="photo-actions">
+          <button type="button" class="btn primary" id="btnAiFill">تعبئة وحفظ مباشر (Gemini)</button>
+          <button type="button" class="btn soft" id="btnLocalFill">تعبئة وحفظ محلي</button>
+        </div>
+      </div>
+
       <form class="form-grid" id="coverForm" autocomplete="off">
         <label class="field full">
           <span>عنوان التقرير</span>
@@ -60,12 +72,12 @@
           <input name="ministry_no" id="fMinistry" type="text" />
         </label>
         <label class="field">
-          <span>التاريخ</span>
-          <input name="date" id="fDate" type="text" placeholder="مثال: 1/10/2026" />
+          <span>المشرف</span>
+          <input name="engineer" id="fEngineer" type="text" placeholder="اسم المشرف" />
         </label>
         <label class="field">
-          <span>اسم المهندس / المعد</span>
-          <input name="engineer" id="fEngineer" type="text" placeholder="مثال: م. بندر يحيى" />
+          <span>التاريخ (اليوم تلقائياً)</span>
+          <input name="date" id="fDate" type="text" placeholder="مثال: 6/10/2026" />
         </label>
       </form>
     </section>
@@ -74,9 +86,17 @@
       <div class="panel-head row">
         <div>
           <h2>إجمالي الملاحظات</h2>
-          <p>أضف أو عدّل أو أعد ترتيب الملاحظات — تظهر كقائمة في الشريحة الثانية.</p>
+          <p>كل سطر = نقطة في الشريحة الثانية. يمكنك اللصق من الشات أعلاه للحفظ المباشر.</p>
         </div>
         <button type="button" class="btn soft" id="btnAddNote">+ ملاحظة جديدة</button>
+      </div>
+      <label class="field full" style="margin-bottom:0.9rem">
+        <span>لصق ملاحظات كاملة (كل سطر = ملاحظة)</span>
+        <textarea id="notesBulk" rows="5" placeholder="الصق كل الملاحظات هنا ثم اضغط تطبيق"></textarea>
+      </label>
+      <div class="photo-actions" style="margin-bottom:0.9rem">
+        <button type="button" class="btn soft" id="btnApplyNotes">تطبيق الملاحظات الملصقة</button>
+        <button type="button" class="btn ghost danger" id="btnClearNotes">مسح كل الملاحظات</button>
       </div>
       <ul class="notes-list" id="notesList"></ul>
     </section>
