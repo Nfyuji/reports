@@ -431,10 +431,6 @@ def _merge_size_px(ws, rng) -> tuple[int, int]:
     return max(80, width_px - 8), max(60, height_px - 8)
 
 
-def _slot_sort_key(rng) -> tuple[int, int]:
-    return (rng.min_row, rng.min_col)
-
-
 def _is_photo_slot_merge(rng) -> bool:
     """مربع صورة في القالب: أعمدة B أو J أو Q بعرض/ارتفاع مناسب."""
     if rng.min_col not in (2, 10, 17):  # B, J, Q
@@ -446,64 +442,80 @@ def _is_photo_slot_merge(rng) -> bool:
     return True
 
 
-def _slot_priority(val) -> int:
-    """ترتيب التعبئة: #VALUE! أولاً ثم فارغ ثم إلزامي ثم اختياري."""
-    if val is None or str(val).strip() == "":
-        return 1
-    s = str(val).strip().upper()
-    if s in {"#VALUE!", "#VALUE"}:
-        return 0
-    if "MANDATORY" in s or "إلزامي" in str(val):
-        return 2
-    if "OPTIONAL" in s or "إختياري" in str(val) or "اختياري" in str(val):
-        return 3
-    return 9
+def _is_value_error(val) -> bool:
+    return str(val or "").strip().upper() in {"#VALUE!", "#VALUE"}
 
 
-def _find_value_photo_slots(ws) -> list:
+def _is_optional_label(val) -> bool:
+    s = str(val or "")
+    return "OPTIONAL" in s.upper() or "إختياري" in s or "اختياري" in s
+
+
+def _is_mandatory_label(val) -> bool:
+    s = str(val or "")
+    return "MANDATORY" in s.upper() or "إلزامي" in s
+
+
+def _photo_section_start_row(ws) -> int:
+    """أول صف لمنطقة مربعات الصور (#VALUE!)."""
+    for rng in ws.merged_cells.ranges:
+        if not _is_photo_slot_merge(rng):
+            continue
+        if _is_value_error(ws.cell(rng.min_row, rng.min_col).value):
+            return rng.min_row
+    # بعد حفظ سابق قد تُمسح #VALUE! — ابحث عنوان التقرير المصور
+    for r in range(40, min(ws.max_row or 40, 200) + 1):
+        a = ws.cell(r, 1).value
+        if a and ("مواصفات" in str(a) or "Photo report" in str(a)):
+            return r + 4
+    title = (ws.title or "").upper()
+    if "O&M" in title or title == "O&M":
+        return 110
+    return 60
+
+
+def _find_value_photo_slots(ws, include_optional: bool = False) -> list:
     """
-    مربعات الصور كما في قالب التقرير اليومي:
-    B##:I## / J##:P## / Q##:X## بدءاً من صفوف #VALUE!
-    ثم الفارغ / إلزامي / اختياري جنب بعضها.
+    مربعات الصور الصحيحة فقط:
+    1) خلايا #VALUE!
+    2) ثم الفارغ بنفس الشبكة
+    3) ثم إلزامي
+    4) اختياري فقط إذا include_optional=True
+    الترتيب: صف ثم B→J→Q  (لا تذهب لصفحة أخيرة قبل امتلاء الشبكة)
     """
-    candidates = [rng for rng in ws.merged_cells.ranges if _is_photo_slot_merge(rng)]
-    if not candidates:
-        return []
+    start_row = _photo_section_start_row(ws)
+    primary = []  # #VALUE!
+    empty = []
+    mandatory = []
+    optional = []
 
-    # ابدأ من أول صف فيه #VALUE! (منطقة التقرير المصور)
-    value_rows = [
-        rng.min_row
-        for rng in candidates
-        if str(ws.cell(rng.min_row, rng.min_col).value or "").strip().upper()
-        in {"#VALUE!", "#VALUE"}
-    ]
-    if value_rows:
-        start_row = min(value_rows)
-    else:
-        # بعد الحفظ السابق تُمسح #VALUE! — ابدأ من أصغر صف مربعات تحت 50
-        below = [rng.min_row for rng in candidates if rng.min_row >= 50]
-        start_row = min(below) if below else 50
-
-    usable = []
-    for rng in candidates:
+    for rng in ws.merged_cells.ranges:
+        if not _is_photo_slot_merge(rng):
+            continue
         if rng.min_row < start_row:
             continue
         val = ws.cell(rng.min_row, rng.min_col).value
-        pr = _slot_priority(val)
-        if pr >= 9:
-            continue
-        usable.append((pr, rng.min_row, rng.min_col, rng))
+        if _is_value_error(val):
+            primary.append(rng)
+        elif _is_optional_label(val):
+            optional.append(rng)
+        elif _is_mandatory_label(val):
+            mandatory.append(rng)
+        elif val is None or str(val).strip() == "":
+            empty.append(rng)
 
-    # مهم: بعد مسح #VALUE! رتّب بالموقع (صف ثم عمود) حتى تبقى B→J→Q ثم الصف التالي
-    usable.sort(key=lambda x: (x[1], x[2], x[0]))
-    return [x[3] for x in usable]
+    def _sort(slots):
+        return sorted(slots, key=lambda r: (r.min_row, r.min_col))
+
+    out = _sort(primary) + _sort(empty) + _sort(mandatory)
+    if include_optional:
+        out += _sort(optional)
+    return out
 
 
 def _photo_col_groups(slots: list) -> list[tuple[int, int]]:
-    """مجموعات الأعمدة الثلاث من القالب (B:I / J:P / Q:X)."""
     if not slots:
         return [(2, 9), (10, 16), (17, 24)]
-    # خذ صفاً فيه 3 مربعات إن أمكن
     by_row: dict[int, list] = {}
     for s in slots:
         by_row.setdefault(s.min_row, []).append(s)
@@ -511,137 +523,111 @@ def _photo_col_groups(slots: list) -> list[tuple[int, int]]:
         if len(group) >= 3:
             group = sorted(group, key=lambda x: x.min_col)
             return [(g.min_col, g.max_col) for g in group[:3]]
-    s0 = min(slots, key=lambda x: (x.min_row, x.min_col))
-    span = s0.max_col - s0.min_col
-    return [(2, 2 + span), (10, 10 + span), (17, 17 + span)]
+    return [(2, 9), (10, 16), (17, 24)]
+
+
+def _first_optional_row(ws) -> int | None:
+    rows = []
+    for rng in ws.merged_cells.ranges:
+        if not _is_photo_slot_merge(rng):
+            continue
+        if _is_optional_label(ws.cell(rng.min_row, rng.min_col).value):
+            rows.append(rng.min_row)
+    return min(rows) if rows else None
 
 
 def _ensure_photo_slots(ws, needed: int) -> list:
     """
-    إن زادت الصور عن المربعات الموجودة:
-    يُنشئ صفوفاً جديدة بنفس الطريقة بجانب/تحت الموجود (B/J/Q).
+    يملأ مربعات #VALUE!/الفارغ/إلزامي أولاً.
+    إن احتجنا أكثر: يُنشئ صفوفاً جديدة قبل منطقة Optional (ليس في آخر الصفحة).
     """
-    slots = _find_value_photo_slots(ws)
+    slots = _find_value_photo_slots(ws, include_optional=False)
     if needed <= len(slots):
-        return slots
+        return slots[:needed]
 
-    if not slots:
-        # أنشئ أول صف قياسي إن لم يوجد شيء
-        start_row = 60 if "HVAC" in (ws.title or "") or "CLEAN" in (ws.title or "").upper() else 110
-        row_span = 7
-        col_groups = [(2, 9), (10, 16), (17, 24)]
-        last_row = start_row - 1
-    else:
+    # استخدم الاختياري فقط بعد امتلاء الشبكة الأساسية
+    slots = _find_value_photo_slots(ws, include_optional=True)
+    if needed <= len(slots):
+        return slots[:needed]
+
+    row_span = 7
+    col_groups = _photo_col_groups(slots) if slots else [(2, 9), (10, 16), (17, 24)]
+    if slots:
         row_span = slots[0].max_row - slots[0].min_row + 1
-        col_groups = _photo_col_groups(slots)
+        template_heights = [
+            ws.row_dimensions[r].height for r in range(slots[0].min_row, slots[0].max_row + 1)
+        ]
         last_row = max(s.max_row for s in slots)
-        # انسخ ارتفاع الصف من أول مربع
-        template_heights = []
-        for r in range(slots[0].min_row, slots[0].max_row + 1):
-            template_heights.append(ws.row_dimensions[r].height)
+    else:
+        template_heights = [18] * row_span
+        last_row = _photo_section_start_row(ws) - 1
+
+    opt_row = _first_optional_row(ws)
+    # إن وُجد Optional، أدرج الصفوف الجديدة قبله عبر البناء بعد آخر مربع غير اختياري
+    non_opt = _find_value_photo_slots(ws, include_optional=False)
+    if non_opt:
+        last_row = max(s.max_row for s in non_opt)
 
     safety = 0
-    while len(slots) < needed and safety < 80:
+    while len(_find_value_photo_slots(ws, include_optional=True)) < needed and safety < 40:
         safety += 1
         start = last_row + 1
+        # لا تقفز بعيدًا بعد Optional إن أمكن — أنشئ مباشرة تحت آخر مربع أساسي
+        if opt_row is not None and start >= opt_row:
+            start = last_row + 1
         end = start + row_span - 1
-
-        # ارتفاع الصفوف مثل القالب
-        if slots:
-            for i in range(row_span):
-                h = template_heights[i] if i < len(template_heights) else template_heights[-1]
-                if h:
-                    ws.row_dimensions[start + i].height = h
-        else:
-            for i in range(row_span):
-                ws.row_dimensions[start + i].height = 18
-
-        # عمود Comment
+        for i in range(row_span):
+            h = template_heights[i] if i < len(template_heights) else 18
+            if h:
+                ws.row_dimensions[start + i].height = h
         try:
             ws.merge_cells(start_row=start, start_column=1, end_row=end, end_column=1)
             ws.cell(start, 1).value = "Comment"
         except Exception:
             pass
-
-        # ثلاثة مربعات جنب بعض: B / J / Q
         for c1, c2 in col_groups:
             try:
-                ws.merge_cells(
-                    start_row=start,
-                    start_column=c1,
-                    end_row=end,
-                    end_column=c2,
-                )
+                ws.merge_cells(start_row=start, start_column=c1, end_row=end, end_column=c2)
                 ws.cell(start, c1).value = None
             except Exception:
-                # إن كان مدموجاً مسبقاً تجاهل
                 pass
-
         last_row = end
-        slots = _find_value_photo_slots(ws)
-        # إن فشل الاكتشاف لسبب ما، أضف نطاقاً يدوياً عبر إعادة البحث عن الدمج الجديد
-        if len(slots) < needed:
-            # تأكد أن الدمج الجديد يُرى
-            fresh = [
-                rng
-                for rng in ws.merged_cells.ranges
-                if rng.min_row == start and _is_photo_slot_merge(rng)
-            ]
-            if fresh and len(_find_value_photo_slots(ws)) <= len(slots):
-                # أجبر إدراجها في القائمة عبر قيمة فارغة مقبولة
-                for rng in fresh:
-                    if ws.cell(rng.min_row, rng.min_col).value not in (None, ""):
-                        continue
-                slots = _find_value_photo_slots(ws)
 
-    return _find_value_photo_slots(ws)
+    return _find_value_photo_slots(ws, include_optional=True)[: max(needed, 1)]
 
 
 def _clear_photos_in_slot_area(ws, slots: list) -> None:
-    """استبدال: احذف أي صور سابقة داخل منطقة مربعات الصور فقط."""
+    """احذف أي صور عائمة/قديمة في منطقة التقرير المصور (استبدال نظيف)."""
     if not slots:
         return
-    min_r = min(s.min_row for s in slots) - 1
-    max_r = max(s.max_row for s in slots) + 1
-    # AnchorMarker.row صفرية الأساس
+    # امسح من قبل أول مربع بقليل حتى آخر مربع — لإزالة الصور الغلط فوق #VALUE!
+    min_r = max(45, min(s.min_row for s in slots) - 15)
+    max_r = max(s.max_row for s in slots) + 5
     min_a = max(0, min_r - 1)
-    max_a = max_r  # inclusive-ish
+    max_a = max_r
     keep = []
     for img in list(ws._images):
         anchor = img.anchor
-        row = None
-        col = None
-        if hasattr(anchor, "_from") and anchor._from is not None:
-            row = int(anchor._from.row)
-            col = int(anchor._from.col)
-        # أبقِ شعارات الرأس والزوايا (أعمدة عالية مثل W/X للشعارات الجانبية فوق المنطقة)
-        if row is None:
+        if not hasattr(anchor, "_from") or anchor._from is None:
             keep.append(img)
             continue
+        row = int(anchor._from.row)
+        col = int(anchor._from.col)
         if row < min_a or row > max_a:
             keep.append(img)
             continue
-        # صور داخل أعمدة مربعات B/J/Q تقريباً (0-based: 1, 9, 16)
-        if col is not None and col >= 20:
-            # شعار جانبي صغير — أبقه
+        if col >= 20:
             keep.append(img)
             continue
-        # غير ذلك: صورة قديمة داخل المربعات → تُستبدل (لا تُبقى)
+        # صورة داخل/فوق مربعات الصور → تُحذف للاستبدال
     ws._images = keep
 
 
 def _place_image_in_merge(ws, rng, blob: bytes) -> None:
-    """يضع الصورة داخل مربع #VALUE! بمقاس المربع (متوافق مع إكسل)."""
+    """يضع الصورة داخل مربع #VALUE! نفسه (إرساء على الخلية B/J/Q)."""
     from openpyxl.cell.cell import MergedCell
-    from openpyxl.drawing.spreadsheet_drawing import (
-        AnchorMarker,
-        OneCellAnchor,
-        TwoCellAnchor,
-        XDRPositiveSize2D,
-    )
-    from openpyxl.utils.units import pixels_to_EMU
 
-    # امسح نص #VALUE! / Mandatory دون فك الدمج
+    # امسح #VALUE! من زاوية المربع
     try:
         anchor_cell = ws.cell(rng.min_row, rng.min_col)
         if not isinstance(anchor_cell, MergedCell):
@@ -655,35 +641,13 @@ def _place_image_in_merge(ws, rng, blob: bytes) -> None:
     xl_img.width = px_w
     xl_img.height = px_h
 
-    # TwoCellAnchor يربط بأركان المربع + OneCell احتياطي إن فشل
-    margin = 6000
-    _from = AnchorMarker(
-        col=rng.min_col - 1,
-        colOff=margin,
-        row=rng.min_row - 1,
-        rowOff=margin,
-    )
-    to = AnchorMarker(
-        col=rng.max_col,  # نهاية المربع (مثل قوالب الإكسل)
-        colOff=0,
-        row=rng.max_row,
-        rowOff=0,
-    )
-    try:
-        xl_img.anchor = TwoCellAnchor(editAs="twoCell", _from=_from, to=to)
-    except Exception:
-        xl_img.anchor = OneCellAnchor(
-            _from=_from,
-            ext=XDRPositiveSize2D(cx=pixels_to_EMU(px_w), cy=pixels_to_EMU(px_h)),
-        )
-    ws.add_image(xl_img)
+    # الأوثق في إكسل: إرساء OneCell على زاوية المربع بمقاس المربع
+    cell = f"{get_column_letter(rng.min_col)}{rng.min_row}"
+    ws.add_image(xl_img, cell)
 
 
 def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_label: str) -> None:
-    """
-    استبدال الصور داخل مربعات القالب (#VALUE! ثم المجاور الفارغ/إلزامي/اختياري).
-    إن زادت الصور يُنشئ مربعات جديدة بنفس الطريقة جنبها/تحتها.
-    """
+    """استبدال الصور داخل مربعات #VALUE! ثم المجاور — ليس فوقها ولا في آخر الصفحة."""
     all_photos = list(board_blobs) + list(work_blobs)
     if not all_photos:
         return
@@ -692,7 +656,6 @@ def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_lab
     if not slots:
         return
 
-    # استبدال: امسح الصور القديمة من المربعات ثم ضع الجديدة مكانها
     _clear_photos_in_slot_area(ws, slots)
 
     for idx, blob in enumerate(all_photos):
