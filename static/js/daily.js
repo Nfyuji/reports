@@ -1,10 +1,12 @@
 (() => {
+  const SHEET_KEYS = ["OM", "HVAC", "CLEANING"];
+
   const state = {
-    active: "O&M",
+    active: "OM",
     header: {},
     sheets: {}, // key -> {meta..., items:[]}
     photos: {
-      "O&M": { board: [], work: [] },
+      OM: { board: [], work: [] },
       HVAC: { board: [], work: [] },
       CLEANING: { board: [], work: [] },
     },
@@ -27,6 +29,14 @@
     savingEl.hidden = !on;
     const p = savingEl.querySelector("p");
     if (p && msg) p.textContent = msg;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   function readHeader() {
@@ -60,7 +70,10 @@
 
   function updateProgress() {
     const sh = currentSheet();
-    if (!sh) return;
+    if (!sh) {
+      $("#progress").textContent = "0 / 0";
+      return;
+    }
     const total = sh.items.length;
     const done = sh.items.filter((i) => i.done).length;
     $("#progress").textContent = `${done} / ${total}`;
@@ -70,10 +83,15 @@
     const sh = currentSheet();
     const list = $("#checkList");
     list.innerHTML = "";
-    if (!sh) return;
+    if (!sh) {
+      list.innerHTML = `<li class="check-item"><div class="txt">لا توجد بنود — حدّث الصفحة أو تأكد من رفع قالب الإكسل</div></li>`;
+      updateProgress();
+      renderThumbs();
+      return;
+    }
 
     const labels = {
-      "O&M": ["صور الصيانة", "صورة لوحة + صور أعمال الصيانة"],
+      OM: ["صور الصيانة", "صورة لوحة + صور أعمال الصيانة"],
       HVAC: ["صور التكييف", "صورة لوحة + صور أعمال التكييف"],
       CLEANING: ["صور نظافة المبنى", "صورة لوحة + صور نظافة المبنى"],
     };
@@ -102,15 +120,10 @@
     renderThumbs();
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
   function renderThumbs() {
+    if (!state.photos[state.active]) {
+      state.photos[state.active] = { board: [], work: [] };
+    }
     const pack = state.photos[state.active];
     const draw = (el, arr, kind) => {
       el.innerHTML = "";
@@ -165,7 +178,7 @@
     btn.addEventListener("click", () => {
       document.querySelectorAll(".stab").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      state.active = btn.dataset.key;
+      state.active = btn.dataset.key || "OM";
       renderChecks();
     });
   });
@@ -186,9 +199,10 @@
 
   async function uploadPhotos() {
     const fd = new FormData();
-    for (const key of Object.keys(state.photos)) {
+    for (const key of SHEET_KEYS) {
+      const pack = state.photos[key] || { board: [], work: [] };
       for (const kind of ["board", "work"]) {
-        state.photos[key][kind].forEach((p, i) => {
+        (pack[kind] || []).forEach((p, i) => {
           if (p.file) fd.append(`photo_${key}_${kind}_${i}`, p.file, p.name || "photo.jpg");
           else if (p.id) fd.append(`keep_${key}_${kind}`, p.id);
         });
@@ -258,26 +272,29 @@
       fillHeader(data.header || {});
       state.sheets = {};
       (data.sheets || []).forEach((sh) => {
-        state.sheets[sh.key] = sh;
-        if (!state.photos[sh.key]) state.photos[sh.key] = { board: [], work: [] };
+        const key = sh.key === "O&M" ? "OM" : sh.key;
+        sh.key = key;
+        state.sheets[key] = sh;
+        if (!state.photos[key]) state.photos[key] = { board: [], work: [] };
       });
-      // صور محفوظة كـ data URIs إن وُجدت
       if (data.photos) {
-        for (const key of Object.keys(data.photos)) {
+        for (const rawKey of Object.keys(data.photos)) {
+          const key = rawKey === "O&M" ? "OM" : rawKey;
           state.photos[key] = {
-            board: (data.photos[key].board || []).map((p) => ({ id: p.id, src: p.src, name: p.name })),
-            work: (data.photos[key].work || []).map((p) => ({ id: p.id, src: p.src, name: p.name })),
+            board: (data.photos[rawKey].board || []).map((p) => ({ id: p.id, src: p.src, name: p.name })),
+            work: (data.photos[rawKey].work || []).map((p) => ({ id: p.id, src: p.src, name: p.name })),
           };
         }
       }
       if (!state.sheets[state.active]) {
-        state.active = Object.keys(state.sheets)[0] || "O&M";
+        state.active = SHEET_KEYS.find((k) => state.sheets[k]) || "OM";
       }
       document.querySelectorAll(".stab").forEach((b) => {
         b.classList.toggle("active", b.dataset.key === state.active);
       });
       renderChecks();
-      toast("تم تحميل التقرير اليومي");
+      const counts = SHEET_KEYS.map((k) => `${k}:${(state.sheets[k] && state.sheets[k].items.length) || 0}`).join(" ");
+      toast(`تم التحميل — ${counts}`);
     } catch (err) {
       toast(err.message || "خطأ", "error");
     } finally {

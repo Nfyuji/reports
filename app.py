@@ -419,7 +419,7 @@ def _daily_map(uid: int) -> dict[str, dict[str, list[str]]]:
     return DAILY_PHOTO_MAP.setdefault(
         uid,
         {
-            "O&M": {"board": [], "work": []},
+            "OM": {"board": [], "work": []},
             "HVAC": {"board": [], "work": []},
             "CLEANING": {"board": [], "work": []},
         },
@@ -471,7 +471,7 @@ def api_daily_get():
     store = _daily_store(uid)
     amap = _daily_map(uid)
     photos = {}
-    for key in ("O&M", "HVAC", "CLEANING"):
+    for key in ("OM", "HVAC", "CLEANING"):
         photos[key] = {
             "board": _photos_meta(store, amap.get(key, {}).get("board", [])),
             "work": _photos_meta(store, amap.get(key, {}).get("work", [])),
@@ -486,23 +486,22 @@ def api_daily_photos():
     user = _current_user()
     uid = user.id
     store = _daily_store(uid)
-    amap = _daily_map(uid)
 
-    # إعادة بناء الخريطة من الملفات المرفوعة + keep ids
+    # مفاتيح آمنة بدون & (OM = ورقة O&M)
     new_map = {
-        "O&M": {"board": [], "work": []},
+        "OM": {"board": [], "work": []},
         "HVAC": {"board": [], "work": []},
         "CLEANING": {"board": [], "work": []},
     }
 
-    for key in ("O&M", "HVAC", "CLEANING"):
+    for key in ("OM", "HVAC", "CLEANING"):
         for kind in ("board", "work"):
             for kid in request.form.getlist(f"keep_{key}_{kind}"):
                 if kid in store:
                     new_map[key][kind].append(kid)
 
     for field, f in request.files.items():
-        # photo_O&M_board_0
+        # photo_OM_board_0 / photo_HVAC_work_1
         if not field.startswith("photo_"):
             continue
         parts = field.split("_")
@@ -510,6 +509,8 @@ def api_daily_photos():
             continue
         key = parts[1]
         kind = parts[2]
+        if key == "O&M":
+            key = "OM"
         if key not in new_map or kind not in ("board", "work"):
             continue
         blob = f.read()
@@ -613,7 +614,7 @@ def api_daily_to_pptx():
 
     photo_blobs = [(ph["blob"], _guess_ext(None, ph.get("content_type"))) for ph in data.get("photos") or []]
     added = 0
-    for key in ("O&M", "HVAC", "CLEANING"):
+    for key in ("OM", "HVAC", "CLEANING", "O&M"):
         for kind in ("board", "work"):
             for pid in amap.get(key, {}).get(kind, []):
                 item = store.get(pid)

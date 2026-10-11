@@ -18,10 +18,12 @@ from PIL import Image as PILImage
 
 BASE = Path(__file__).resolve().parent
 
-# ترتيب الواجهة حسب طلب المستخدم: أخضر صيانة → أحمر تكييف → أزرق نظافة
+# مفاتيح آمنة للويب (بدون &) ← اسم ورقة الإكسل الفعلي
+# O&M كان يكسر HTML/FormData بسبب علامة &
 SHEET_META = {
-    "O&M": {
-        "key": "O&M",
+    "OM": {
+        "key": "OM",
+        "sheet_name": "O&M",
         "ar": "صيانة",
         "en": "O&M",
         "color": "green",
@@ -30,6 +32,7 @@ SHEET_META = {
     },
     "HVAC": {
         "key": "HVAC",
+        "sheet_name": "HVAC",
         "ar": "تكييف",
         "en": "HVAC",
         "color": "red",
@@ -38,6 +41,7 @@ SHEET_META = {
     },
     "CLEANING": {
         "key": "CLEANING",
+        "sheet_name": "CLEANING",
         "ar": "نظافة",
         "en": "CLEANING",
         "color": "blue",
@@ -45,6 +49,24 @@ SHEET_META = {
         "order": 3,
     },
 }
+
+# توافق عكسي إن وصل مفتاح قديم
+SHEET_ALIASES = {
+    "O&M": "OM",
+    "OM": "OM",
+    "HVAC": "HVAC",
+    "CLEANING": "CLEANING",
+}
+
+
+def normalize_sheet_key(key: str) -> str:
+    return SHEET_ALIASES.get((key or "").strip(), (key or "").strip())
+
+
+def excel_sheet_name(key: str) -> str:
+    k = normalize_sheet_key(key)
+    meta = SHEET_META.get(k)
+    return meta["sheet_name"] if meta else key
 
 MONTHS = {
     1: "JAN",
@@ -259,11 +281,11 @@ def load_daily_structure(xlsx_path: Path) -> dict[str, Any]:
     wb = load_workbook(xlsx_path, data_only=False)
     sheets = []
     header = {}
-    for key in ("O&M", "HVAC", "CLEANING"):
-        if key not in wb.sheetnames:
+    for key, meta in SHEET_META.items():
+        sheet_name = meta["sheet_name"]
+        if sheet_name not in wb.sheetnames:
             continue
-        ws = wb[key]
-        meta = SHEET_META[key]
+        ws = wb[sheet_name]
         if not header:
             header = read_header(ws)
         sheets.append(
@@ -367,15 +389,46 @@ def _write_header(ws, header: dict[str, Any]) -> None:
         _set_cell_value(ws, "M7", day)
 
 
-def _prepare_image(blob: bytes, max_side: int = 900) -> io.BytesIO:
+def _prepare_image(blob: bytes, max_side: int = 900, box: tuple[int, int] | None = None) -> io.BytesIO:
+    """يجهّز الصورة؛ إن مُرّر box=(w,h) تُناسب المربع مثل القالب (cover داخل الإطار)."""
     im = PILImage.open(io.BytesIO(blob))
     if im.mode in ("RGBA", "P"):
         im = im.convert("RGB")
-    im.thumbnail((max_side, max_side), PILImage.Resampling.LANCZOS)
+    if box:
+        tw, th = max(40, box[0]), max(40, box[1])
+        # غطِّ المربع مع قص بسيط من الوسط (مشابه لإدراج صورة في إكسل)
+        src_ratio = im.width / im.height
+        dst_ratio = tw / th
+        if src_ratio > dst_ratio:
+            new_h = th
+            new_w = int(th * src_ratio)
+        else:
+            new_w = tw
+            new_h = int(tw / src_ratio)
+        im = im.resize((max(1, new_w), max(1, new_h)), PILImage.Resampling.LANCZOS)
+        left = max(0, (im.width - tw) // 2)
+        top = max(0, (im.height - th) // 2)
+        im = im.crop((left, top, left + tw, top + th))
+    else:
+        im.thumbnail((max_side, max_side), PILImage.Resampling.LANCZOS)
     buf = io.BytesIO()
-    im.save(buf, format="JPEG", quality=85)
+    im.save(buf, format="JPEG", quality=88)
     buf.seek(0)
     return buf
+
+
+def _merge_size_px(ws, rng) -> tuple[int, int]:
+    """عرض وارتفاع مربع الدمج بالبكسل (تقريب إكسل)."""
+    width_px = 0
+    for c in range(rng.min_col, rng.max_col + 1):
+        letter = get_column_letter(c)
+        w = ws.column_dimensions[letter].width
+        width_px += int(float(w or 8.43) * 7 + 5)
+    height_px = 0
+    for r in range(rng.min_row, rng.max_row + 1):
+        h = ws.row_dimensions[r].height
+        height_px += int(float(h or 15) * 96 / 72)
+    return max(80, width_px - 8), max(60, height_px - 8)
 
 
 def _slot_sort_key(rng) -> tuple[int, int]:
@@ -578,9 +631,15 @@ def _clear_photos_in_slot_area(ws, slots: list) -> None:
 
 
 def _place_image_in_merge(ws, rng, blob: bytes) -> None:
-    """يضع الصورة ممدودة داخل مربع الدمج (نفس مكان #VALUE!) باستبدال."""
+    """يضع الصورة داخل مربع #VALUE! بمقاس المربع (متوافق مع إكسل)."""
     from openpyxl.cell.cell import MergedCell
-    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+    from openpyxl.drawing.spreadsheet_drawing import (
+        AnchorMarker,
+        OneCellAnchor,
+        TwoCellAnchor,
+        XDRPositiveSize2D,
+    )
+    from openpyxl.utils.units import pixels_to_EMU
 
     # امسح نص #VALUE! / Mandatory دون فك الدمج
     try:
@@ -590,12 +649,14 @@ def _place_image_in_merge(ws, rng, blob: bytes) -> None:
     except Exception:
         pass
 
-    buf = _prepare_image(blob, max_side=1600)
+    px_w, px_h = _merge_size_px(ws, rng)
+    buf = _prepare_image(blob, box=(px_w, px_h))
     xl_img = XLImage(buf)
+    xl_img.width = px_w
+    xl_img.height = px_h
 
-    # TwoCellAnchor يملأ المربع بالكامل مثل إدراج صورة في إكسل
-    # إحداثيات Anchor صفرية الأساس؛ to عند نهاية المربع
-    margin = 8000  # EMU خفيف
+    # TwoCellAnchor يربط بأركان المربع + OneCell احتياطي إن فشل
+    margin = 6000
     _from = AnchorMarker(
         col=rng.min_col - 1,
         colOff=margin,
@@ -603,12 +664,18 @@ def _place_image_in_merge(ws, rng, blob: bytes) -> None:
         rowOff=margin,
     )
     to = AnchorMarker(
-        col=rng.max_col,  # بعد آخر عمود (حد أقصى للتمدد)
+        col=rng.max_col,  # نهاية المربع (مثل قوالب الإكسل)
         colOff=0,
         row=rng.max_row,
         rowOff=0,
     )
-    xl_img.anchor = TwoCellAnchor(editAs="twoCell", _from=_from, to=to)
+    try:
+        xl_img.anchor = TwoCellAnchor(editAs="twoCell", _from=_from, to=to)
+    except Exception:
+        xl_img.anchor = OneCellAnchor(
+            _from=_from,
+            ext=XDRPositiveSize2D(cx=pixels_to_EMU(px_w), cy=pixels_to_EMU(px_h)),
+        )
     ws.add_image(xl_img)
 
 
@@ -653,16 +720,30 @@ def save_daily_report(
     wb = load_workbook(xlsx_path)
 
     done_map: dict[str, dict[str, bool]] = {}
+    client_cells_map: dict[str, dict[str, str]] = {}
     for sh in sheets_payload:
-        key = sh.get("key")
+        key = normalize_sheet_key(sh.get("key") or "")
         if not key:
             continue
         done_map[key] = {it["id"]: bool(it.get("done")) for it in (sh.get("items") or []) if it.get("id")}
+        client_cells_map[key] = {
+            it["id"]: it["done_cell"]
+            for it in (sh.get("items") or [])
+            if it.get("id") and it.get("done_cell")
+        }
 
-    for key in ("O&M", "HVAC", "CLEANING"):
-        if key not in wb.sheetnames:
+    # طبّع مفاتيح الصور
+    norm_photos: dict[str, dict[str, list]] = {}
+    if photos:
+        for k, kinds in photos.items():
+            nk = normalize_sheet_key(k)
+            norm_photos[nk] = kinds
+
+    for key, meta in SHEET_META.items():
+        sheet_name = meta["sheet_name"]
+        if sheet_name not in wb.sheetnames:
             continue
-        ws = wb[key]
+        ws = wb[sheet_name]
         try:
             _write_header(ws, header)
         except Exception:
@@ -670,13 +751,7 @@ def save_daily_report(
 
         structure_items = extract_sheet_items(ws)
         wanted = done_map.get(key, {})
-        # أيضاً خريطة done_cell من الطلب إن وُجدت
-        client_cells = {}
-        for sh in sheets_payload:
-            if sh.get("key") == key:
-                for it in sh.get("items") or []:
-                    if it.get("id") and it.get("done_cell"):
-                        client_cells[it["id"]] = it["done_cell"]
+        client_cells = client_cells_map.get(key, {})
 
         for it in structure_items:
             if it["id"] not in wanted:
@@ -684,11 +759,11 @@ def save_daily_report(
             cell = client_cells.get(it["id"]) or it["done_cell"]
             _set_done(ws, cell, wanted[it["id"]])
 
-        if photos and key in photos:
-            board = [b for b, _e in photos[key].get("board", [])]
-            work = [b for b, _e in photos[key].get("work", [])]
+        if key in norm_photos:
+            board = [b for b, _e in norm_photos[key].get("board", [])]
+            work = [b for b, _e in norm_photos[key].get("work", [])]
             try:
-                _add_photos(ws, board, work, SHEET_META[key]["photo_label"])
+                _add_photos(ws, board, work, meta["photo_label"])
             except Exception:
                 pass
 
