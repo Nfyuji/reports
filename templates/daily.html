@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>التقرير اليومي</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/daily.css" />
+</head>
+<body>
+  <header class="d-top">
+    <div>
+      <h1>التقرير اليومي</h1>
+      <p>{{ user_name }} · سهّل التأشير من الجوال</p>
+    </div>
+    <div class="d-top-actions">
+      <a class="d-btn ghost" href="/editor">عرض PowerPoint</a>
+      <a class="d-btn ghost" href="/logout">خروج</a>
+    </div>
+  </header>
+
+  <section class="d-card header-card">
+    <h2>بيانات مشتركة</h2>
+    <div class="d-grid">
+      <label>اسم المدرسة<input id="school" type="text" autocomplete="organization" /></label>
+      <label>الرقم الوزاري<input id="ministry" type="text" inputmode="numeric" /></label>
+      <label>اسم المهندس<input id="engineer" type="text" autocomplete="name" /></label>
+      <label>مزود الخدمة<input id="provider" type="text" /></label>
+      <label>رقم المجموعة<input id="group" type="text" /></label>
+      <label>اليوم<input id="day" type="number" min="1" max="31" /></label>
+      <label>الشهر<input id="month" type="text" placeholder="OCT" /></label>
+      <label>السنة<input id="year" type="number" /></label>
+    </div>
+  </section>
+
+  <nav class="sheet-tabs" id="sheetTabs" aria-label="أقسام التقرير">
+    <button type="button" class="stab green active" data-key="O&M">🟢 صيانة<br /><small>O&M</small></button>
+    <button type="button" class="stab red" data-key="HVAC">🔴 تكييف<br /><small>HVAC</small></button>
+    <button type="button" class="stab blue" data-key="CLEANING">🔵 نظافة<br /><small>CLEANING</small></button>
+  </nav>
+
+  <section class="d-card" id="sheetPanel">
+    <div class="sheet-tools">
+      <button type="button" class="d-btn primary" id="btnAllDone">تعليم الكل تم ✓</button>
+      <button type="button" class="d-btn ghost" id="btnAllClear">مسح التأشير</button>
+      <span class="progress" id="progress">0 / 0</span>
+    </div>
+    <ul class="check-list" id="checkList"></ul>
+
+    <div class="photo-block">
+      <h3>صورة اللوحة</h3>
+      <p class="hint">صورة لوحة المدرسة / أمر العمل</p>
+      <label class="d-btn soft file-btn">إضافة صورة لوحة
+        <input type="file" id="boardInput" accept="image/*" capture="environment" multiple hidden />
+      </label>
+      <div class="thumbs" id="boardThumbs"></div>
+    </div>
+
+    <div class="photo-block">
+      <h3 id="workPhotoTitle">صور الأعمال</h3>
+      <p class="hint" id="workPhotoHint">صور الصيانة / التكييف / النظافة حسب النافذة</p>
+      <label class="d-btn soft file-btn">إضافة صور
+        <input type="file" id="workInput" accept="image/*" capture="environment" multiple hidden />
+      </label>
+      <div class="thumbs" id="workThumbs"></div>
+    </div>
+  </section>
+
+  <footer class="d-footer">
+    <button type="button" class="d-btn soft" id="btnReload">تحديث</button>
+    <button type="button" class="d-btn primary" id="btnSave">حفظ في الإكسل</button>
+    <button type="button" class="d-btn accent" id="btnDownload">تحميل Excel</button>
+    <button type="button" class="d-btn ghost" id="btnToPptx">إرسال الصور للعرض</button>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+  <div class="saving" id="saving" hidden><div class="spinner"></div><p>جاري الحفظ…</p></div>
+
+  <script src="/static/js/daily.js"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>اختر نوع التقرير</title>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/daily.css" />
+  <style>
+    .hub {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 1.25rem;
+    }
+    .hub-box {
+      width: min(560px, 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+    .hub-box h1 { margin: 0; text-align: center; }
+    .hub-box p { margin: 0 0 0.5rem; text-align: center; color: var(--muted); }
+    .hub-card {
+      display: block;
+      padding: 1.25rem;
+      border-radius: 18px;
+      text-decoration: none;
+      color: inherit;
+      border: 2px solid var(--line);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+    .hub-card strong { display: block; font-size: 1.2rem; margin-bottom: 0.35rem; }
+    .hub-card.excel { border-color: rgba(31,138,76,0.45); background: var(--green-bg); }
+    .hub-card.pptx { border-color: rgba(31,95,191,0.4); background: var(--blue-bg); }
+  </style>
+</head>
+<body>
+  <div class="hub">
+    <div class="hub-box">
+      <h1>مرحباً {{ user_name }}</h1>
+      <p>اختر التقرير الذي تريد تعديله</p>
+      <a class="hub-card excel" href="/daily">
+        <strong>📊 التقرير اليومي (Excel)</strong>
+        صيانة أخضر · تكييف أحمر · نظافة أزرق — تأشير «تم» وصور من الجوال
+      </a>
+      <a class="hub-card pptx" href="/editor">
+        <strong>📑 التقرير الفني (PowerPoint)</strong>
+        غلاف + ملاحظات كنقاط + صور المبنى
+      </a>
+      <a class="d-btn ghost" href="/logout" style="align-self:center">خروج</a>
+    </div>
+  </div>
+</body>
+</html>

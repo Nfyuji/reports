@@ -21,7 +21,7 @@ from flask import (
 )
 
 import auth_store
-from report_engine import load_report, photos_to_data_uris, save_report, _guess_ext
+from report_engine import load_report, photos_to_data_uris, save_report, today_date_str, _guess_ext
 
 BASE = Path(__file__).resolve().parent
 
@@ -34,6 +34,9 @@ auth_store.init_db()
 
 # صور كل مستخدم منفصلة: user_id -> {photo_id: (bytes, ext, name)}
 PHOTO_STORES: dict[int, dict[str, tuple[bytes, str, str]]] = {}
+# صور التقرير اليومي: user_id -> sheet -> board/work -> [photo_id...]
+DAILY_PHOTO_STORES: dict[int, dict[str, tuple[bytes, str, str]]] = {}
+DAILY_PHOTO_MAP: dict[int, dict[str, dict[str, list[str]]]] = {}
 
 
 def _photo_store() -> dict[str, tuple[bytes, str, str]]:
@@ -99,8 +102,15 @@ def _reset_store_from_report(photos: list[dict]) -> list[dict]:
 @app.route("/")
 def home():
     if _current_user():
-        return redirect(url_for("editor"))
+        return redirect(url_for("hub"))
     return redirect(url_for("login"))
+
+
+@app.route("/hub")
+@login_required
+def hub():
+    user = _current_user()
+    return render_template("hub.html", user_name=user.display_name)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -115,15 +125,17 @@ def login():
             session.clear()
             session["user_id"] = user.id
             session["display_name"] = user.display_name
-            return redirect(url_for("editor"))
+            return redirect(url_for("hub"))
     return render_template("login.html", error=error)
 
 
 @app.route("/logout")
 def logout():
     uid = session.get("user_id")
-    if uid and int(uid) in PHOTO_STORES:
+    if uid:
         PHOTO_STORES.pop(int(uid), None)
+        DAILY_PHOTO_STORES.pop(int(uid), None)
+        DAILY_PHOTO_MAP.pop(int(uid), None)
     session.clear()
     return redirect(url_for("login"))
 
@@ -139,6 +151,13 @@ def editor():
         expires_at=user.expires_at,
         days_left=user.days_left,
     )
+
+
+@app.route("/daily")
+@login_required
+def daily():
+    user = _current_user()
+    return render_template("daily.html", user_name=user.display_name)
 
 
 @app.route("/admin/login", methods=["GET", "POST"])
@@ -202,6 +221,22 @@ def api_admin_upload_template():
 
     auth_store.ensure_dirs()
     dest = auth_store.MASTER_DIR / "قالب_التقرير_الفني.pptx"
+    f.save(dest)
+    return jsonify({"ok": True, "filename": dest.name, "size": dest.stat().st_size})
+
+
+@app.route("/api/admin/upload-daily-template", methods=["POST"])
+@admin_required
+def api_admin_upload_daily_template():
+    """رفع قالب Excel اليومي (O&M / HVAC / CLEANING)."""
+    f = request.files.get("template")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "اختر ملف xlsx"}), 400
+    if not f.filename.lower().endswith(".xlsx"):
+        return jsonify({"ok": False, "error": "الملف يجب أن يكون .xlsx"}), 400
+
+    auth_store.ensure_dirs()
+    dest = auth_store.MASTER_DIR / "daily_report.xlsx"
     f.save(dest)
     return jsonify({"ok": True, "filename": dest.name, "size": dest.stat().st_size})
 
@@ -333,13 +368,269 @@ def api_save():
     )
 
 
+def _safe_filename_part(text: str, fallback: str = "") -> str:
+    """جزء آمن لاسم الملف (بدون رموز تمنع التنزيل)."""
+    t = (text or "").strip()
+    for ch in '\\/:*?"<>|\n\r\t':
+        t = t.replace(ch, " ")
+    t = " ".join(t.split())
+    return t or fallback
+
+
+def _download_filename(user: auth_store.User, path: Path) -> str:
+    """اسم التنزيل: المدرسة_الشخص_التاريخ.pptx"""
+    school = ""
+    person = user.display_name or ""
+    date = today_date_str()
+    try:
+        data = load_report(path)
+        cover = data.get("cover") or {}
+        school = cover.get("school") or ""
+        person = cover.get("engineer") or person
+        date = cover.get("date") or date
+    except Exception:
+        pass
+    school = _safe_filename_part(school, "مدرسة")
+    person = _safe_filename_part(person, user.display_name or "مشرف")
+    date = _safe_filename_part(
+        (date or today_date_str()).replace("/", "-").replace("\\", "-"),
+        today_date_str().replace("/", "-"),
+    )
+    return f"{school}_{person}_{date}.pptx"
+
+
 @app.route("/api/download", methods=["GET"])
 @login_required
 def api_download():
     user = _current_user()
     path = auth_store.user_report_path(user)
-    name = f"تقرير_{user.display_name}.pptx"
+    name = _download_filename(user, path)
     return send_file(path, as_attachment=True, download_name=name)
+
+
+# ---------- التقرير اليومي Excel ----------
+
+
+def _daily_store(uid: int) -> dict[str, tuple[bytes, str, str]]:
+    return DAILY_PHOTO_STORES.setdefault(uid, {})
+
+
+def _daily_map(uid: int) -> dict[str, dict[str, list[str]]]:
+    return DAILY_PHOTO_MAP.setdefault(
+        uid,
+        {
+            "O&M": {"board": [], "work": []},
+            "HVAC": {"board": [], "work": []},
+            "CLEANING": {"board": [], "work": []},
+        },
+    )
+
+
+def _photos_meta(store: dict, ids: list[str]) -> list[dict]:
+    out = []
+    for pid in ids:
+        item = store.get(pid)
+        if not item:
+            continue
+        blob, ext, name = item
+        meta = photos_to_data_uris(
+            [{"id": pid, "blob": blob, "content_type": f"image/{ext.lstrip('.')}", "name": name}]
+        )
+        out.extend(meta)
+    return out
+
+
+@app.route("/api/daily", methods=["GET"])
+@login_required
+def api_daily_get():
+    import excel_engine
+
+    user = _current_user()
+    try:
+        path = excel_engine.user_daily_path(user)
+        data = excel_engine.load_daily_structure(path)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # دمج حالة التأشير المحفوظة إن وجدت
+    saved = excel_engine.load_state(user)
+    if saved.get("sheets"):
+        by_key = {s["key"]: s for s in saved["sheets"]}
+        for sh in data["sheets"]:
+            prev = by_key.get(sh["key"])
+            if not prev:
+                continue
+            done_map = {i["id"]: i.get("done") for i in prev.get("items") or []}
+            for it in sh["items"]:
+                if it["id"] in done_map:
+                    it["done"] = bool(done_map[it["id"]])
+    if saved.get("header"):
+        data["header"] = {**data["header"], **saved["header"]}
+
+    uid = user.id
+    store = _daily_store(uid)
+    amap = _daily_map(uid)
+    photos = {}
+    for key in ("O&M", "HVAC", "CLEANING"):
+        photos[key] = {
+            "board": _photos_meta(store, amap.get(key, {}).get("board", [])),
+            "work": _photos_meta(store, amap.get(key, {}).get("work", [])),
+        }
+
+    return jsonify({"ok": True, **data, "photos": photos})
+
+
+@app.route("/api/daily/photos", methods=["POST"])
+@login_required
+def api_daily_photos():
+    user = _current_user()
+    uid = user.id
+    store = _daily_store(uid)
+    amap = _daily_map(uid)
+
+    # إعادة بناء الخريطة من الملفات المرفوعة + keep ids
+    new_map = {
+        "O&M": {"board": [], "work": []},
+        "HVAC": {"board": [], "work": []},
+        "CLEANING": {"board": [], "work": []},
+    }
+
+    for key in ("O&M", "HVAC", "CLEANING"):
+        for kind in ("board", "work"):
+            for kid in request.form.getlist(f"keep_{key}_{kind}"):
+                if kid in store:
+                    new_map[key][kind].append(kid)
+
+    for field, f in request.files.items():
+        # photo_O&M_board_0
+        if not field.startswith("photo_"):
+            continue
+        parts = field.split("_")
+        if len(parts) < 4:
+            continue
+        key = parts[1]
+        kind = parts[2]
+        if key not in new_map or kind not in ("board", "work"):
+            continue
+        blob = f.read()
+        if not blob:
+            continue
+        ext = _guess_ext(f.filename, f.mimetype)
+        pid = f"d{uuid.uuid4().hex[:10]}"
+        store[pid] = (blob, ext, f.filename or "photo.jpg")
+        new_map[key][kind].append(pid)
+
+    DAILY_PHOTO_MAP[uid] = new_map
+    return jsonify({"ok": True, "photo_ids": new_map})
+
+
+@app.route("/api/daily/save", methods=["POST"])
+@login_required
+def api_daily_save():
+    import excel_engine
+
+    user = _current_user()
+    payload = request.get_json(force=True, silent=True) or {}
+    header = payload.get("header") or {}
+    sheets = payload.get("sheets") or []
+    photo_ids = payload.get("photo_ids") or _daily_map(user.id)
+
+    uid = user.id
+    store = _daily_store(uid)
+    photos_blobs: dict[str, dict[str, list[tuple[bytes, str]]]] = {}
+    for key, kinds in photo_ids.items():
+        photos_blobs[key] = {"board": [], "work": []}
+        for kind in ("board", "work"):
+            for pid in kinds.get(kind) or []:
+                item = store.get(pid)
+                if item:
+                    photos_blobs[key][kind].append((item[0], item[1]))
+
+    try:
+        path = excel_engine.user_daily_path(user)
+        excel_engine.save_daily_report(path, header, sheets, photos=photos_blobs, output_path=path)
+        excel_engine.save_state(user, {"header": header, "sheets": sheets})
+        DAILY_PHOTO_MAP[uid] = photo_ids
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/daily/download", methods=["GET"])
+@login_required
+def api_daily_download():
+    import excel_engine
+
+    user = _current_user()
+    path = excel_engine.user_daily_path(user)
+    try:
+        data = excel_engine.load_daily_structure(path)
+        h = data.get("header") or {}
+        school = _safe_filename_part(h.get("school") or "مدرسة", "مدرسة")
+        eng = _safe_filename_part(h.get("engineer") or user.display_name or "مهندس", "مهندس")
+        day = h.get("day") or ""
+        month = h.get("month") or ""
+        year = h.get("year") or ""
+        date = _safe_filename_part(f"{day}-{month}-{year}", today_date_str().replace("/", "-"))
+        name = f"التقرير اليومي {school}_{eng}_{date}.xlsx"
+    except Exception:
+        name = f"التقرير_اليومي_{user.display_name}.xlsx"
+    return send_file(path, as_attachment=True, download_name=name)
+
+
+@app.route("/api/daily/to-pptx", methods=["POST"])
+@login_required
+def api_daily_to_pptx():
+    """يدمج صور التقرير اليومي داخل ملف PowerPoint الخاص بالمستخدم."""
+    user = _current_user()
+    uid = user.id
+    store = _daily_store(uid)
+    amap = _daily_map(uid)
+
+    try:
+        path = auth_store.user_report_path(user)
+        data = load_report(path)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"تعذر فتح العرض: {e}"}), 500
+
+    cover = data.get("cover") or {}
+    # حدّث الغلاف من بيانات الإكسل إن وُجدت
+    try:
+        import excel_engine
+
+        daily = excel_engine.load_daily_structure(excel_engine.user_daily_path(user))
+        h = daily.get("header") or {}
+        if h.get("school"):
+            cover["school"] = h["school"]
+        if h.get("ministry_no"):
+            cover["ministry_no"] = str(h["ministry_no"])
+        if h.get("engineer"):
+            cover["engineer"] = h["engineer"]
+        cover["date"] = today_date_str()
+    except Exception:
+        pass
+
+    photo_blobs = [(ph["blob"], _guess_ext(None, ph.get("content_type"))) for ph in data.get("photos") or []]
+    added = 0
+    for key in ("O&M", "HVAC", "CLEANING"):
+        for kind in ("board", "work"):
+            for pid in amap.get(key, {}).get(kind, []):
+                item = store.get(pid)
+                if not item:
+                    continue
+                blob, ext, _name = item
+                photo_blobs.append((blob, ext))
+                added += 1
+
+    try:
+        save_report(path, cover, data.get("observations") or [], photo_blobs, output_path=path)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # صفّر مخزن العرض ليعاد التحميل من الملف
+    PHOTO_STORES.pop(uid, None)
+    return jsonify({"ok": True, "photo_count": added})
 
 
 # ---------- API إدارة ----------

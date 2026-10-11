@@ -102,7 +102,7 @@ def _parse_cover(prs: Presentation) -> dict[str, str]:
                 if shape.text_frame.paragraphs[0].runs
                 else shape.text
             )
-        elif shape.name == "TextBox 3":
+        elif _is_cover_details_shape(shape):
             for p in shape.text_frame.paragraphs:
                 joined = "".join(r.text for r in p.runs).strip()
                 if not joined:
@@ -112,8 +112,20 @@ def _parse_cover(prs: Presentation) -> dict[str, str]:
                     school = joined.split(":", 1)[1].strip() if ":" in joined else school
                 elif "الرقم الوزاري" in joined:
                     ministry_no = joined.split(":", 1)[1].strip() if ":" in joined else ministry_no
-                elif "مشرف" in joined or "مهندس" in joined or "المعد" in joined:
-                    engineer = joined.split(":", 1)[1].strip() if ":" in joined else engineer
+                elif (
+                    "اسم المهندس" in joined
+                    or "مشرف" in joined
+                    or "مهندس" in joined
+                    or "المعد" in joined
+                    or joined.startswith("م /")
+                    or joined.startswith("م/")
+                ):
+                    if ":" in joined:
+                        engineer = joined.split(":", 1)[1].strip()
+                    elif "/" in joined:
+                        engineer = joined.split("/", 1)[1].strip()
+                    else:
+                        engineer = engineer
                 elif joined.startswith("التاريخ") or "التاريخ" in joined[:12]:
                     date = joined.split(":", 1)[1].strip() if ":" in joined else date
 
@@ -182,7 +194,7 @@ def _set_single_line_paragraph(p_el, line: str, template_p) -> None:
 def _rebuild_cover_details(shape, cover: dict[str, str]) -> None:
     """
     يعيد بناء مربع التفاصيل بالترتيب:
-    المدرسة → الرقم الوزاري → المشرف → التاريخ
+    اسم المدرسة → الرقم الوزاري → اسم المهندس → التاريخ
     """
     tf = shape.text_frame
     if not tf.paragraphs:
@@ -190,13 +202,13 @@ def _rebuild_cover_details(shape, cover: dict[str, str]) -> None:
 
     school = (cover.get("school") or "").strip()
     ministry = (cover.get("ministry_no") or "").strip()
-    supervisor = (cover.get("engineer") or "").strip()
+    engineer = (cover.get("engineer") or "").strip()
     date = (cover.get("date") or "").strip() or today_date_str()
 
     lines = [
         f"اسم المدرسة :{school}",
         f"الرقم الوزاري :{ministry}",
-        f"المشرف :{supervisor}",
+        f"اسم المهندس :{engineer}",
         f"التاريخ:{date}",
     ]
 
@@ -214,8 +226,23 @@ def _rebuild_cover_details(shape, cover: dict[str, str]) -> None:
         body.append(new_p)
 
 
+def _is_cover_details_shape(shape) -> bool:
+    """مربع بيانات الغلاف حتى لو تغيّر اسمه (TextBox 3 أو مربع نص آخر)."""
+    if not shape.has_text_frame:
+        return False
+    text = shape.text or ""
+    if "اسم المدرسة" in text or "الرقم الوزاري" in text:
+        return True
+    return shape.name == "TextBox 3" and bool(text.strip())
+
+
 def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
     slide = prs.slides[0]
+    data = dict(cover)
+    if not (data.get("date") or "").strip():
+        data["date"] = today_date_str()
+
+    details = []
     for shape in slide.shapes:
         if not shape.has_text_frame:
             continue
@@ -225,11 +252,20 @@ def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
                     shape.text_frame.paragraphs[0].runs[0],
                     cover.get("title", "").strip() or "التقرير الفني لحالة المبنى",
                 )
-        elif shape.name == "TextBox 3":
-            data = dict(cover)
-            if not (data.get("date") or "").strip():
-                data["date"] = today_date_str()
-            _rebuild_cover_details(shape, data)
+            continue
+        blob = shape.text or ""
+        if "اسم المدرسة" in blob or "الرقم الوزاري" in blob:
+            details.append(shape)
+
+    # إن لم يوجد مربع فيه البيانات، اكتب في TextBox 3
+    if not details:
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.name == "TextBox 3":
+                details.append(shape)
+                break
+
+    for shape in details:
+        _rebuild_cover_details(shape, data)
 
 
 def _paragraph_plain_text(p_el) -> str:
@@ -628,7 +664,11 @@ def _build_photo_slide(prs: Presentation):
     slide = _duplicate_slide(prs, 0)
     # احذف نصوص الغلاف فقط
     for sh in list(slide.shapes):
-        if sh.has_text_frame and sh.name in {"TextBox 2", "TextBox 3"}:
+        if sh.has_text_frame and (
+            sh.name in {"TextBox 2", "TextBox 3"}
+            or "اسم المدرسة" in (sh.text or "")
+            or "الرقم الوزاري" in (sh.text or "")
+        ):
             _delete_shape(sh)
 
     title_box = slide.shapes.add_textbox(Emu(6639744), Emu(304780), Emu(9497375), Emu(616836))

@@ -13,8 +13,10 @@ _uploads/
 ~$*
 _نسخة_*/
 
-# قوالب PowerPoint الكبيرة (تبقى محلياً)
+# قوالب PowerPoint / Excel الكبيرة (تبقى محلياً)
 *.pptx
+*.xlsx
+*.tmp.xlsx
 
 # OS / IDE
 .DS_Store

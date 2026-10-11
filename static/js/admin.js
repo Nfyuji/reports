@@ -47,6 +47,25 @@
     setTimeout(() => location.reload(), 800);
   });
 
+  document.getElementById("dailyTemplateForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("dailyTemplateFile");
+    if (!fileInput.files?.length) {
+      toast("اختر ملف xlsx", "error");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("template", fileInput.files[0]);
+    const res = await fetch("/api/admin/upload-daily-template", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!data.ok) {
+      toast(data.error || "فشل رفع قالب الإكسل", "error");
+      return;
+    }
+    toast("تم رفع قالب Excel اليومي");
+    setTimeout(() => location.reload(), 800);
+  });
+
   document.getElementById("geminiForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const api_key = document.getElementById("geminiKey").value.trim();
