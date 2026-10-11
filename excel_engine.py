@@ -382,129 +382,156 @@ def _slot_sort_key(rng) -> tuple[int, int]:
     return (rng.min_row, rng.min_col)
 
 
+def _is_photo_slot_merge(rng) -> bool:
+    """مربع صورة في القالب: أعمدة B أو J أو Q بعرض/ارتفاع مناسب."""
+    if rng.min_col not in (2, 10, 17):  # B, J, Q
+        return False
+    if (rng.max_col - rng.min_col) < 4:
+        return False
+    if (rng.max_row - rng.min_row) < 3:
+        return False
+    return True
+
+
+def _slot_priority(val) -> int:
+    """ترتيب التعبئة: #VALUE! أولاً ثم فارغ ثم إلزامي ثم اختياري."""
+    if val is None or str(val).strip() == "":
+        return 1
+    s = str(val).strip().upper()
+    if s in {"#VALUE!", "#VALUE"}:
+        return 0
+    if "MANDATORY" in s or "إلزامي" in str(val):
+        return 2
+    if "OPTIONAL" in s or "إختياري" in str(val) or "اختياري" in str(val):
+        return 3
+    return 9
+
+
 def _find_value_photo_slots(ws) -> list:
     """
-    مربعات الصور في التقرير المصور — الخلايا/الدمج التي فيها #VALUE!
-    ومعها المربعات الفارغة المجاورة بنفس شكل الأعمدة (B/J/Q).
+    مربعات الصور كما في قالب التقرير اليومي:
+    B##:I## / J##:P## / Q##:X## بدءاً من صفوف #VALUE!
     """
-    value_slots = []
-    for rng in ws.merged_cells.ranges:
-        anchor = ws.cell(rng.min_row, rng.min_col).value
-        if anchor is None:
-            continue
-        if str(anchor).strip().upper() in {"#VALUE!", "#VALUE"}:
-            value_slots.append(rng)
-
-    if not value_slots:
-        # بحث بدون دمج
-        for row in ws.iter_rows(min_row=40, max_row=min(ws.max_row or 40, 220), max_col=24):
-            for c in row:
-                if c.value is not None and str(c.value).strip().upper() in {"#VALUE!", "#VALUE"}:
-                    # لفّه كمدى وهمي 1 خلية عبر merged lookup لاحقاً
-                    value_slots.append(type("R", (), {
-                        "min_row": c.row, "max_row": c.row + 6,
-                        "min_col": c.column, "max_col": min(c.column + 7, 24),
-                    })())
-
-    if not value_slots:
+    candidates = [rng for rng in ws.merged_cells.ranges if _is_photo_slot_merge(rng)]
+    if not candidates:
         return []
 
-    min_row = min(r.min_row for r in value_slots) - 2
-    max_row = max(r.max_row for r in value_slots) + 16
+    # ابدأ من أول صف فيه #VALUE! (منطقة التقرير المصور)
+    value_rows = [
+        rng.min_row
+        for rng in candidates
+        if str(ws.cell(rng.min_row, rng.min_col).value or "").strip().upper()
+        in {"#VALUE!", "#VALUE"}
+    ]
+    if not value_rows:
+        # إن لم يوجد #VALUE! خذ من صف 50 فما فوق
+        start_row = 50
+    else:
+        start_row = min(value_rows)
 
-    # أضف مربعات فارغة في منطقة الصور بنفس نمط الأعمدة
-    extras = []
-    for rng in ws.merged_cells.ranges:
-        if rng.min_row < min_row or rng.min_row > max_row:
-            continue
-        if rng.min_col not in (2, 10, 17):  # B, J, Q
-            continue
-        # عرض معقول لمربع صورة
-        if (rng.max_col - rng.min_col) < 4 or (rng.max_row - rng.min_row) < 3:
+    usable = []
+    for rng in candidates:
+        if rng.min_row < start_row:
             continue
         val = ws.cell(rng.min_row, rng.min_col).value
-        if val is None or str(val).strip() == "" or str(val).strip().upper() in {"#VALUE!", "#VALUE"}:
-            extras.append(rng)
-
-    # دمج فريد حسب الزاوية
-    seen = set()
-    slots = []
-    for rng in sorted(list(value_slots) + extras, key=_slot_sort_key):
-        key = (rng.min_row, rng.min_col)
-        if key in seen:
+        pr = _slot_priority(val)
+        if pr >= 9:
             continue
-        seen.add(key)
-        slots.append(rng)
-    return slots
+        usable.append((pr, rng.min_row, rng.min_col, rng))
+
+    usable.sort(key=lambda x: (x[0], x[1], x[2]))
+    return [x[3] for x in usable]
 
 
-def _clear_photos_in_rows(ws, min_row: int, max_row: int) -> None:
-    """يحذف الصور داخل صفوف مربعات #VALUE! فقط (لا يمس شعارات الرأس)."""
+def _clear_photos_in_slot_area(ws, slots: list) -> None:
+    """استبدال: احذف أي صور سابقة داخل منطقة مربعات الصور فقط."""
+    if not slots:
+        return
+    min_r = min(s.min_row for s in slots) - 1
+    max_r = max(s.max_row for s in slots) + 1
+    # AnchorMarker.row صفرية الأساس
+    min_a = max(0, min_r - 1)
+    max_a = max_r  # inclusive-ish
     keep = []
     for img in list(ws._images):
         anchor = img.anchor
         row = None
+        col = None
         if hasattr(anchor, "_from") and anchor._from is not None:
             row = int(anchor._from.row)
-        if row is None or row < min_row or row > max_row:
+            col = int(anchor._from.col)
+        # أبقِ شعارات الرأس والزوايا (أعمدة عالية مثل W/X للشعارات الجانبية فوق المنطقة)
+        if row is None:
             keep.append(img)
+            continue
+        if row < min_a or row > max_a:
+            keep.append(img)
+            continue
+        # صور داخل أعمدة مربعات B/J/Q تقريباً (0-based: 1, 9, 16)
+        if col is not None and col >= 20:
+            # شعار جانبي صغير — أبقه
+            keep.append(img)
+            continue
+        # غير ذلك: صورة قديمة داخل المربعات → تُستبدل (لا تُبقى)
     ws._images = keep
 
 
-def _estimate_slot_size_px(ws, rng) -> tuple[int, int]:
-    """تقدير عرض/ارتفاع المربع بالبكسل من أعمدة/صفوف الدمج."""
-    width = 0.0
-    for c in range(rng.min_col, rng.max_col + 1):
-        letter = get_column_letter(c)
-        w = ws.column_dimensions[letter].width
-        width += float(w or 8.5)
-    height = 0.0
-    for r in range(rng.min_row, rng.max_row + 1):
-        h = ws.row_dimensions[r].height
-        height += float(h or 15)
-    # تقريب: عرض العمود~7px لكل وحدة، ارتفاع الصف~1.33px لكل نقطة
-    px_w = max(120, int(width * 7.2))
-    px_h = max(90, int(height * 1.35))
-    return min(px_w, 420), min(px_h, 320)
+def _place_image_in_merge(ws, rng, blob: bytes) -> None:
+    """يضع الصورة ممدودة داخل مربع الدمج (نفس مكان #VALUE!) باستبدال."""
+    from openpyxl.cell.cell import MergedCell
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, TwoCellAnchor
+
+    # امسح نص #VALUE! / Mandatory دون فك الدمج
+    try:
+        anchor_cell = ws.cell(rng.min_row, rng.min_col)
+        if not isinstance(anchor_cell, MergedCell):
+            anchor_cell.value = None
+    except Exception:
+        pass
+
+    buf = _prepare_image(blob, max_side=1600)
+    xl_img = XLImage(buf)
+
+    # TwoCellAnchor يملأ المربع بالكامل مثل إدراج صورة في إكسل
+    # إحداثيات Anchor صفرية الأساس؛ to عند نهاية المربع
+    margin = 8000  # EMU خفيف
+    _from = AnchorMarker(
+        col=rng.min_col - 1,
+        colOff=margin,
+        row=rng.min_row - 1,
+        rowOff=margin,
+    )
+    to = AnchorMarker(
+        col=rng.max_col,  # بعد آخر عمود (حد أقصى للتمدد)
+        colOff=0,
+        row=rng.max_row,
+        rowOff=0,
+    )
+    xl_img.anchor = TwoCellAnchor(editAs="twoCell", _from=_from, to=to)
+    ws.add_image(xl_img)
 
 
 def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_label: str) -> None:
-    """يضع الصور داخل مربعات #VALUE! في قسم التقرير المصور."""
-    slots = _find_value_photo_slots(ws)
-    if not slots:
-        return
-
-    min_r = min(s.min_row for s in slots)
-    max_r = max(s.max_row for s in slots)
-    _clear_photos_in_rows(ws, min_r - 1, max_r + 1)
-
-    # اللوحة أولاً ثم صور الأعمال
+    """
+    استبدال الصور داخل مربعات القالب (#VALUE! ثم الفارغ/إلزامي/اختياري)
+    بنفس أماكن ملف التقرير اليومي الأصلي.
+    """
     all_photos = list(board_blobs) + list(work_blobs)
     if not all_photos:
         return
 
-    from openpyxl.cell.cell import MergedCell
+    slots = _find_value_photo_slots(ws)
+    if not slots:
+        return
+
+    # استبدال: امسح الصور القديمة من المربعات ثم ضع الجديدة مكانها
+    _clear_photos_in_slot_area(ws, slots)
 
     for idx, blob in enumerate(all_photos):
         if idx >= len(slots):
             break
-        rng = slots[idx]
-        # امسح #VALUE! من زاوية المربع دون فك الدمج
         try:
-            anchor_cell = ws.cell(rng.min_row, rng.min_col)
-            if not isinstance(anchor_cell, MergedCell):
-                anchor_cell.value = None
-        except Exception:
-            pass
-        try:
-            buf = _prepare_image(blob, max_side=1200)
-            xl_img = XLImage(buf)
-            w, h = _estimate_slot_size_px(ws, rng)
-            # هامش صغير داخل المربع
-            xl_img.width = max(100, w - 12)
-            xl_img.height = max(80, h - 12)
-            anchor = f"{get_column_letter(rng.min_col)}{rng.min_row}"
-            ws.add_image(xl_img, anchor)
+            _place_image_in_merge(ws, slots[idx], blob)
         except Exception:
             continue
 
