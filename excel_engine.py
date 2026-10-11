@@ -378,53 +378,133 @@ def _prepare_image(blob: bytes, max_side: int = 900) -> io.BytesIO:
     return buf
 
 
-def _find_photo_start_row(ws) -> int:
-    """صف بداية منطقة الصور أسفل البنود."""
-    last = 40
-    for r in range(12, min(ws.max_row or 12, 200) + 1):
-        a = ws[f"A{r}"].value
-        m = ws[f"M{r}"].value
-        if a or m:
-            last = r
-    return max(last + 3, 50)
+def _slot_sort_key(rng) -> tuple[int, int]:
+    return (rng.min_row, rng.min_col)
 
 
-def _clear_added_photos(ws) -> None:
-    """يحذف الصور المضافة سابقاً في منطقة التقرير (يبقي شعارات الرأس تقريباً)."""
+def _find_value_photo_slots(ws) -> list:
+    """
+    مربعات الصور في التقرير المصور — الخلايا/الدمج التي فيها #VALUE!
+    ومعها المربعات الفارغة المجاورة بنفس شكل الأعمدة (B/J/Q).
+    """
+    value_slots = []
+    for rng in ws.merged_cells.ranges:
+        anchor = ws.cell(rng.min_row, rng.min_col).value
+        if anchor is None:
+            continue
+        if str(anchor).strip().upper() in {"#VALUE!", "#VALUE"}:
+            value_slots.append(rng)
+
+    if not value_slots:
+        # بحث بدون دمج
+        for row in ws.iter_rows(min_row=40, max_row=min(ws.max_row or 40, 220), max_col=24):
+            for c in row:
+                if c.value is not None and str(c.value).strip().upper() in {"#VALUE!", "#VALUE"}:
+                    # لفّه كمدى وهمي 1 خلية عبر merged lookup لاحقاً
+                    value_slots.append(type("R", (), {
+                        "min_row": c.row, "max_row": c.row + 6,
+                        "min_col": c.column, "max_col": min(c.column + 7, 24),
+                    })())
+
+    if not value_slots:
+        return []
+
+    min_row = min(r.min_row for r in value_slots) - 2
+    max_row = max(r.max_row for r in value_slots) + 16
+
+    # أضف مربعات فارغة في منطقة الصور بنفس نمط الأعمدة
+    extras = []
+    for rng in ws.merged_cells.ranges:
+        if rng.min_row < min_row or rng.min_row > max_row:
+            continue
+        if rng.min_col not in (2, 10, 17):  # B, J, Q
+            continue
+        # عرض معقول لمربع صورة
+        if (rng.max_col - rng.min_col) < 4 or (rng.max_row - rng.min_row) < 3:
+            continue
+        val = ws.cell(rng.min_row, rng.min_col).value
+        if val is None or str(val).strip() == "" or str(val).strip().upper() in {"#VALUE!", "#VALUE"}:
+            extras.append(rng)
+
+    # دمج فريد حسب الزاوية
+    seen = set()
+    slots = []
+    for rng in sorted(list(value_slots) + extras, key=_slot_sort_key):
+        key = (rng.min_row, rng.min_col)
+        if key in seen:
+            continue
+        seen.add(key)
+        slots.append(rng)
+    return slots
+
+
+def _clear_photos_in_rows(ws, min_row: int, max_row: int) -> None:
+    """يحذف الصور داخل صفوف مربعات #VALUE! فقط (لا يمس شعارات الرأس)."""
     keep = []
     for img in list(ws._images):
         anchor = img.anchor
         row = None
         if hasattr(anchor, "_from") and anchor._from is not None:
-            row = anchor._from.row
-        # شعارات أعلى الصفحة (صفوف 0-10) تبقى
-        if row is not None and row <= 10:
+            row = int(anchor._from.row)
+        if row is None or row < min_row or row > max_row:
             keep.append(img)
     ws._images = keep
 
 
+def _estimate_slot_size_px(ws, rng) -> tuple[int, int]:
+    """تقدير عرض/ارتفاع المربع بالبكسل من أعمدة/صفوف الدمج."""
+    width = 0.0
+    for c in range(rng.min_col, rng.max_col + 1):
+        letter = get_column_letter(c)
+        w = ws.column_dimensions[letter].width
+        width += float(w or 8.5)
+    height = 0.0
+    for r in range(rng.min_row, rng.max_row + 1):
+        h = ws.row_dimensions[r].height
+        height += float(h or 15)
+    # تقريب: عرض العمود~7px لكل وحدة، ارتفاع الصف~1.33px لكل نقطة
+    px_w = max(120, int(width * 7.2))
+    px_h = max(90, int(height * 1.35))
+    return min(px_w, 420), min(px_h, 320)
+
+
 def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_label: str) -> None:
-    start = _find_photo_start_row(ws)
-    _set_cell_value(ws, f"A{start}", "صورة اللوحة")
-    _set_cell_value(ws, f"A{start + 1}", photo_label)
+    """يضع الصور داخل مربعات #VALUE! في قسم التقرير المصور."""
+    slots = _find_value_photo_slots(ws)
+    if not slots:
+        return
 
-    # امسح صور قديمة أسفل الرأس
-    _clear_added_photos(ws)
+    min_r = min(s.min_row for s in slots)
+    max_r = max(s.max_row for s in slots)
+    _clear_photos_in_rows(ws, min_r - 1, max_r + 1)
 
-    col = 0
-    row = start + 2
-    all_photos = [("لوحة", b) for b in board_blobs] + [("عمل", b) for b in work_blobs]
-    for idx, (_kind, blob) in enumerate(all_photos):
+    # اللوحة أولاً ثم صور الأعمال
+    all_photos = list(board_blobs) + list(work_blobs)
+    if not all_photos:
+        return
+
+    from openpyxl.cell.cell import MergedCell
+
+    for idx, blob in enumerate(all_photos):
+        if idx >= len(slots):
+            break
+        rng = slots[idx]
+        # امسح #VALUE! من زاوية المربع دون فك الدمج
         try:
-            buf = _prepare_image(blob)
+            anchor_cell = ws.cell(rng.min_row, rng.min_col)
+            if not isinstance(anchor_cell, MergedCell):
+                anchor_cell.value = None
+        except Exception:
+            pass
+        try:
+            buf = _prepare_image(blob, max_side=1200)
             xl_img = XLImage(buf)
-            xl_img.width = 220
-            xl_img.height = 160
-            # صفوف/أعمدة: 3 صور في الصف
-            c = (idx % 3) * 4  # 0,4,8
-            r = row + (idx // 3) * 10
-            cell = f"{get_column_letter(c + 1)}{r}"
-            ws.add_image(xl_img, cell)
+            w, h = _estimate_slot_size_px(ws, rng)
+            # هامش صغير داخل المربع
+            xl_img.width = max(100, w - 12)
+            xl_img.height = max(80, h - 12)
+            anchor = f"{get_column_letter(rng.min_col)}{rng.min_row}"
+            ws.add_image(xl_img, anchor)
         except Exception:
             continue
 
