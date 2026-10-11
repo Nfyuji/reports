@@ -279,43 +279,63 @@ def load_daily_structure(xlsx_path: Path) -> dict[str, Any]:
     return {"header": header, "sheets": sheets}
 
 
-def _writable_cell(ws, coord: str):
-    """يرجع خلية قابلة للكتابة (أول خلية في الدمج إن وُجد)."""
-    from openpyxl.cell.cell import MergedCell
-    from openpyxl.utils import coordinate_to_tuple
+def _coord_row_col(coord: str) -> tuple[int, int]:
+    from openpyxl.utils.cell import coordinate_to_tuple
 
-    row, col = coordinate_to_tuple(coord)
-    for rng in ws.merged_cells.ranges:
+    # (row, col)
+    return coordinate_to_tuple(coord)
+
+
+def _unmerge_at(ws, coord: str) -> None:
+    """يفك أي دمج يغطي الخلية حتى تصبح قابلة للكتابة."""
+    row, col = _coord_row_col(coord)
+    doomed = []
+    for rng in list(ws.merged_cells.ranges):
         if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
-            return ws.cell(rng.min_row, rng.min_col)
-    cell = ws.cell(row, col)
-    if isinstance(cell, MergedCell):
-        return None
-    return cell
+            doomed.append(str(rng))
+    for ref in doomed:
+        try:
+            ws.unmerge_cells(ref)
+        except Exception:
+            pass
 
 
 def _set_cell_value(ws, coord: str, value) -> None:
-    cell = _writable_cell(ws, coord)
-    if cell is not None:
-        try:
-            cell.value = value
-        except AttributeError:
-            pass
+    """كتابة آمنة حتى لو الخلية ضمن دمج."""
+    from openpyxl.cell.cell import MergedCell
+
+    row, col = _coord_row_col(coord)
+    # إن كانت ضمن دمج: اكتب في أول خلية ثم أعد الدمج إن لزم — الأبسط فك الدمج
+    _unmerge_at(ws, coord)
+    cell = ws.cell(row=row, column=col)
+    if isinstance(cell, MergedCell):
+        # محاولة أخيرة على زاوية أي دمج متبقٍ
+        _unmerge_at(ws, coord)
+        cell = ws.cell(row=row, column=col)
+    if isinstance(cell, MergedCell):
+        return
+    try:
+        cell.value = value
+    except AttributeError:
+        return
 
 
 def _set_done(ws, cell: str, done: bool) -> None:
     """تعليم البند تم / إلغاء — يكتب في عمود Done."""
-    _set_cell_value(ws, cell, "تم Done" if done else None)
-    # صف اليسار: امسح P/O المتعارضة عند التأشير بتم
-    if cell.startswith("E"):
-        r = int(cell[1:])
-        if done:
-            _set_cell_value(ws, f"F{r}", None)
-            _set_cell_value(ws, f"H{r}", None)
-    if cell.startswith("Q"):
-        r = int(cell[1:])
-        if done:
-            _set_cell_value(ws, f"R{r}", None)
+    try:
+        _set_cell_value(ws, cell, "تم Done" if done else None)
+        if cell.startswith("E"):
+            r = int(re.sub(r"\D", "", cell) or "0")
+            if r and done:
+                _set_cell_value(ws, f"F{r}", None)
+                _set_cell_value(ws, f"H{r}", None)
+        if cell.startswith("Q"):
+            r = int(re.sub(r"\D", "", cell) or "0")
+            if r and done:
+                _set_cell_value(ws, f"R{r}", None)
+    except Exception:
+        # لا تُسقط الحفظ كله بسبب بند واحد
+        return
 
 
 def _write_header(ws, header: dict[str, Any]) -> None:
@@ -435,25 +455,43 @@ def save_daily_report(
         if key not in wb.sheetnames:
             continue
         ws = wb[key]
-        _write_header(ws, header)
-        # طبّق تم على البنود المعروفة من الهيكل الحالي
+        try:
+            _write_header(ws, header)
+        except Exception:
+            pass
+
         structure_items = extract_sheet_items(ws)
         wanted = done_map.get(key, {})
+        # أيضاً خريطة done_cell من الطلب إن وُجدت
+        client_cells = {}
+        for sh in sheets_payload:
+            if sh.get("key") == key:
+                for it in sh.get("items") or []:
+                    if it.get("id") and it.get("done_cell"):
+                        client_cells[it["id"]] = it["done_cell"]
+
         for it in structure_items:
-            if it["id"] in wanted:
-                _set_done(ws, it["done_cell"], wanted[it["id"]])
-            elif wanted:
-                # إن أُرسلت قائمة كاملة وid غير موجود تجاهل
-                pass
+            if it["id"] not in wanted:
+                continue
+            cell = client_cells.get(it["id"]) or it["done_cell"]
+            _set_done(ws, cell, wanted[it["id"]])
 
         if photos and key in photos:
             board = [b for b, _e in photos[key].get("board", [])]
             work = [b for b, _e in photos[key].get("work", [])]
-            _add_photos(ws, board, work, SHEET_META[key]["photo_label"])
+            try:
+                _add_photos(ws, board, work, SHEET_META[key]["photo_label"])
+            except Exception:
+                pass
 
     tmp = output_path.with_suffix(".tmp.xlsx")
     wb.save(tmp)
-    tmp.replace(output_path)
+    try:
+        tmp.replace(output_path)
+    except PermissionError:
+        alt = output_path.with_name(output_path.stem + "_محدث" + output_path.suffix)
+        tmp.replace(alt)
+        return alt
     return output_path
 
 
