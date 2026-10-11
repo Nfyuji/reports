@@ -281,21 +281,26 @@ def load_daily_structure(xlsx_path: Path) -> dict[str, Any]:
 
 def _writable_cell(ws, coord: str):
     """يرجع خلية قابلة للكتابة (أول خلية في الدمج إن وُجد)."""
-    cell = ws[coord]
     from openpyxl.cell.cell import MergedCell
+    from openpyxl.utils import coordinate_to_tuple
 
-    if not isinstance(cell, MergedCell):
-        return cell
+    row, col = coordinate_to_tuple(coord)
     for rng in ws.merged_cells.ranges:
-        if coord in rng:
+        if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
             return ws.cell(rng.min_row, rng.min_col)
-    return None
+    cell = ws.cell(row, col)
+    if isinstance(cell, MergedCell):
+        return None
+    return cell
 
 
 def _set_cell_value(ws, coord: str, value) -> None:
     cell = _writable_cell(ws, coord)
     if cell is not None:
-        cell.value = value
+        try:
+            cell.value = value
+        except AttributeError:
+            pass
 
 
 def _set_done(ws, cell: str, done: bool) -> None:
@@ -329,17 +334,17 @@ def _write_header(ws, header: dict[str, Any]) -> None:
     if isinstance(month, int):
         month = MONTHS.get(month, m)
 
-    ws["C3"] = school
-    ws["C4"] = ministry
-    ws["I4"] = group
-    ws["C5"] = provider
-    ws["C6"] = engineer
-    ws["J7"] = int(year) if str(year).isdigit() else year
-    ws["L7"] = str(month).upper()[:3]
+    _set_cell_value(ws, "C3", school)
+    _set_cell_value(ws, "C4", ministry)
+    _set_cell_value(ws, "I4", group)
+    _set_cell_value(ws, "C5", provider)
+    _set_cell_value(ws, "C6", engineer)
+    _set_cell_value(ws, "J7", int(year) if str(year).isdigit() else year)
+    _set_cell_value(ws, "L7", str(month).upper()[:3])
     try:
-        ws["M7"] = int(day)
+        _set_cell_value(ws, "M7", int(day))
     except (TypeError, ValueError):
-        ws["M7"] = day
+        _set_cell_value(ws, "M7", day)
 
 
 def _prepare_image(blob: bytes, max_side: int = 900) -> io.BytesIO:
@@ -380,8 +385,8 @@ def _clear_added_photos(ws) -> None:
 
 def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_label: str) -> None:
     start = _find_photo_start_row(ws)
-    ws[f"A{start}"] = "صورة اللوحة"
-    ws[f"A{start + 1}"] = photo_label
+    _set_cell_value(ws, f"A{start}", "صورة اللوحة")
+    _set_cell_value(ws, f"A{start + 1}", photo_label)
 
     # امسح صور قديمة أسفل الرأس
     _clear_added_photos(ws)

@@ -207,7 +207,11 @@
   async function saveDaily() {
     setSaving(true, "جاري حفظ الإكسل…");
     try {
+      if (!Object.keys(state.sheets).length) {
+        throw new Error("لم تُحمَّل بنود التقرير. حدّث الصفحة أولاً");
+      }
       const photo_ids = await uploadPhotos();
+      if (!photo_ids) return;
       const payload = {
         header: readHeader(),
         sheets: Object.values(state.sheets).map((sh) => ({
@@ -225,11 +229,17 @@
         location.href = "/login";
         return;
       }
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "فشل الحفظ");
-      toast("تم الحفظ في ملف الإكسل");
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        throw new Error("فشل الحفظ (استجابة غير صحيحة من السيرفر)");
+      }
+      if (!res.ok || !data.ok) throw new Error(data.error || `فشل الحفظ (${res.status})`);
+      toast("تم الحفظ في ملف الإكسل ✓");
     } catch (err) {
-      toast(err.message || "خطأ", "error");
+      console.error(err);
+      toast(err.message || "خطأ في الحفظ", "error");
     } finally {
       setSaving(false);
     }
