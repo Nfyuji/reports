@@ -411,6 +411,7 @@ def _find_value_photo_slots(ws) -> list:
     """
     مربعات الصور كما في قالب التقرير اليومي:
     B##:I## / J##:P## / Q##:X## بدءاً من صفوف #VALUE!
+    ثم الفارغ / إلزامي / اختياري جنب بعضها.
     """
     candidates = [rng for rng in ws.merged_cells.ranges if _is_photo_slot_merge(rng)]
     if not candidates:
@@ -423,11 +424,12 @@ def _find_value_photo_slots(ws) -> list:
         if str(ws.cell(rng.min_row, rng.min_col).value or "").strip().upper()
         in {"#VALUE!", "#VALUE"}
     ]
-    if not value_rows:
-        # إن لم يوجد #VALUE! خذ من صف 50 فما فوق
-        start_row = 50
-    else:
+    if value_rows:
         start_row = min(value_rows)
+    else:
+        # بعد الحفظ السابق تُمسح #VALUE! — ابدأ من أصغر صف مربعات تحت 50
+        below = [rng.min_row for rng in candidates if rng.min_row >= 50]
+        start_row = min(below) if below else 50
 
     usable = []
     for rng in candidates:
@@ -439,8 +441,107 @@ def _find_value_photo_slots(ws) -> list:
             continue
         usable.append((pr, rng.min_row, rng.min_col, rng))
 
-    usable.sort(key=lambda x: (x[0], x[1], x[2]))
+    # مهم: بعد مسح #VALUE! رتّب بالموقع (صف ثم عمود) حتى تبقى B→J→Q ثم الصف التالي
+    usable.sort(key=lambda x: (x[1], x[2], x[0]))
     return [x[3] for x in usable]
+
+
+def _photo_col_groups(slots: list) -> list[tuple[int, int]]:
+    """مجموعات الأعمدة الثلاث من القالب (B:I / J:P / Q:X)."""
+    if not slots:
+        return [(2, 9), (10, 16), (17, 24)]
+    # خذ صفاً فيه 3 مربعات إن أمكن
+    by_row: dict[int, list] = {}
+    for s in slots:
+        by_row.setdefault(s.min_row, []).append(s)
+    for _r, group in sorted(by_row.items()):
+        if len(group) >= 3:
+            group = sorted(group, key=lambda x: x.min_col)
+            return [(g.min_col, g.max_col) for g in group[:3]]
+    s0 = min(slots, key=lambda x: (x.min_row, x.min_col))
+    span = s0.max_col - s0.min_col
+    return [(2, 2 + span), (10, 10 + span), (17, 17 + span)]
+
+
+def _ensure_photo_slots(ws, needed: int) -> list:
+    """
+    إن زادت الصور عن المربعات الموجودة:
+    يُنشئ صفوفاً جديدة بنفس الطريقة بجانب/تحت الموجود (B/J/Q).
+    """
+    slots = _find_value_photo_slots(ws)
+    if needed <= len(slots):
+        return slots
+
+    if not slots:
+        # أنشئ أول صف قياسي إن لم يوجد شيء
+        start_row = 60 if "HVAC" in (ws.title or "") or "CLEAN" in (ws.title or "").upper() else 110
+        row_span = 7
+        col_groups = [(2, 9), (10, 16), (17, 24)]
+        last_row = start_row - 1
+    else:
+        row_span = slots[0].max_row - slots[0].min_row + 1
+        col_groups = _photo_col_groups(slots)
+        last_row = max(s.max_row for s in slots)
+        # انسخ ارتفاع الصف من أول مربع
+        template_heights = []
+        for r in range(slots[0].min_row, slots[0].max_row + 1):
+            template_heights.append(ws.row_dimensions[r].height)
+
+    safety = 0
+    while len(slots) < needed and safety < 80:
+        safety += 1
+        start = last_row + 1
+        end = start + row_span - 1
+
+        # ارتفاع الصفوف مثل القالب
+        if slots:
+            for i in range(row_span):
+                h = template_heights[i] if i < len(template_heights) else template_heights[-1]
+                if h:
+                    ws.row_dimensions[start + i].height = h
+        else:
+            for i in range(row_span):
+                ws.row_dimensions[start + i].height = 18
+
+        # عمود Comment
+        try:
+            ws.merge_cells(start_row=start, start_column=1, end_row=end, end_column=1)
+            ws.cell(start, 1).value = "Comment"
+        except Exception:
+            pass
+
+        # ثلاثة مربعات جنب بعض: B / J / Q
+        for c1, c2 in col_groups:
+            try:
+                ws.merge_cells(
+                    start_row=start,
+                    start_column=c1,
+                    end_row=end,
+                    end_column=c2,
+                )
+                ws.cell(start, c1).value = None
+            except Exception:
+                # إن كان مدموجاً مسبقاً تجاهل
+                pass
+
+        last_row = end
+        slots = _find_value_photo_slots(ws)
+        # إن فشل الاكتشاف لسبب ما، أضف نطاقاً يدوياً عبر إعادة البحث عن الدمج الجديد
+        if len(slots) < needed:
+            # تأكد أن الدمج الجديد يُرى
+            fresh = [
+                rng
+                for rng in ws.merged_cells.ranges
+                if rng.min_row == start and _is_photo_slot_merge(rng)
+            ]
+            if fresh and len(_find_value_photo_slots(ws)) <= len(slots):
+                # أجبر إدراجها في القائمة عبر قيمة فارغة مقبولة
+                for rng in fresh:
+                    if ws.cell(rng.min_row, rng.min_col).value not in (None, ""):
+                        continue
+                slots = _find_value_photo_slots(ws)
+
+    return _find_value_photo_slots(ws)
 
 
 def _clear_photos_in_slot_area(ws, slots: list) -> None:
@@ -513,14 +614,14 @@ def _place_image_in_merge(ws, rng, blob: bytes) -> None:
 
 def _add_photos(ws, board_blobs: list[bytes], work_blobs: list[bytes], photo_label: str) -> None:
     """
-    استبدال الصور داخل مربعات القالب (#VALUE! ثم الفارغ/إلزامي/اختياري)
-    بنفس أماكن ملف التقرير اليومي الأصلي.
+    استبدال الصور داخل مربعات القالب (#VALUE! ثم المجاور الفارغ/إلزامي/اختياري).
+    إن زادت الصور يُنشئ مربعات جديدة بنفس الطريقة جنبها/تحتها.
     """
     all_photos = list(board_blobs) + list(work_blobs)
     if not all_photos:
         return
 
-    slots = _find_value_photo_slots(ws)
+    slots = _ensure_photo_slots(ws, len(all_photos))
     if not slots:
         return
 
