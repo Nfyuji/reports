@@ -83,6 +83,30 @@
     setTimeout(() => location.reload(), 700);
   });
 
+  document.getElementById("whatsappForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const token = document.getElementById("waToken").value.trim();
+    const payload = {
+      id_instance: document.getElementById("waIdInstance").value.trim(),
+      api_token: token,
+      allowed_phone: document.getElementById("waPhone").value.trim(),
+      user_id: document.getElementById("waUserId").value.trim(),
+      keep_token: !token,
+    };
+    const res = await fetch("/api/admin/whatsapp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      toast(data.error || "فشل حفظ واتساب", "error");
+      return;
+    }
+    toast(data.configured ? "تم حفظ إعدادات واتساب" : "تم الحفظ — أكمل idInstance والتوكن والرقم");
+    setTimeout(() => location.reload(), 800);
+  });
+
   document.getElementById("createForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const display_name = document.getElementById("newName").value.trim();

@@ -164,6 +164,16 @@ def get_setting(key: str, default: str = "") -> str:
         return row["value"] if row else default
 
 
+def set_setting(key: str, value: str) -> None:
+    init_db()
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, (value or "").strip()),
+        )
+
+
 def generate_access_code() -> str:
     """رقم اشتراك مثل: 48291763"""
     alphabet = string.digits

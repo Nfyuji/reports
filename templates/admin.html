@@ -125,6 +125,51 @@
       </form>
     </section>
 
+    <section class="panel active" id="whatsappAdmin" style="margin-bottom:1rem" {% if must_change_password %}hidden{% endif %}>
+      <div class="panel-head">
+        <h2>واتساب — Green API</h2>
+        <p>
+          استقبال صور من رقم محدد فقط، ثم إرسال ملف PowerPoint الجاهز لنفس الرقم.
+          {% if wa and wa.configured %}الحالة: مفعّل{% else %}الحالة: غير مضبوط{% endif %}
+        </p>
+      </div>
+      <form id="whatsappForm" class="form-grid" autocomplete="off">
+        <label class="field">
+          <span>idInstance</span>
+          <input id="waIdInstance" type="text" value="{{ wa.id_instance if wa else '' }}" placeholder="مثال: 1101...." />
+        </label>
+        <label class="field">
+          <span>apiTokenInstance</span>
+          <input id="waToken" type="password" placeholder="{% if wa and wa.api_token_masked %}المحفوظ: {{ wa.api_token_masked }} — اتركه فارغاً إن لم يتغير{% else %}الصق التوكن{% endif %}" />
+        </label>
+        <label class="field">
+          <span>رقم واتساب المسموح فقط (دولي)</span>
+          <input id="waPhone" type="text" value="{{ wa.allowed_phone if wa else '' }}" placeholder="مثال: 9665xxxxxxxx" />
+        </label>
+        <label class="field">
+          <span>اربط بمستخدم النظام (ID)</span>
+          <select id="waUserId">
+            <option value="">— اختر المستخدم —</option>
+            {% for u in users %}
+            <option value="{{ u.id }}" {% if wa and wa.user_id == u.id|string %}selected{% endif %}>
+              #{{ u.id }} — {{ u.display_name }} ({{ u.access_code }})
+            </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="field full">
+          <span>رابط Webhook (انسخه إلى لوحة Green API)</span>
+          <input id="waWebhook" type="text" readonly value="{{ wa_webhook }}" onclick="this.select()" />
+        </label>
+        <div class="field full">
+          <button type="submit" class="btn soft">حفظ إعدادات واتساب</button>
+        </div>
+      </form>
+      <p class="auth-note" style="margin-top:0.75rem">
+        الأوامر من الرقم المسموح: أرسل الصور ثم اكتب <strong>جاهز</strong> لاستلام الملف · <strong>مسح</strong> · <strong>مساعدة</strong>
+      </p>
+    </section>
+
     <section class="panel active" id="mainAdmin" {% if must_change_password %}hidden{% endif %}>
       <div class="panel-head row">
         <div>

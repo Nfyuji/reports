@@ -186,11 +186,15 @@ def admin_login():
 @admin_required
 def admin_panel():
     import ai_parse
+    import green_api
 
     users = auth_store.list_users()
     master = auth_store.master_template_path()
     must_change = auth_store.is_default_admin_password()
     gkey = ai_parse.get_gemini_api_key()
+    wa = green_api.get_public_config()
+    # رابط الويب هوك الكامل لعرضه في لوحة الإدارة
+    wa_webhook = request.host_url.rstrip("/") + "/api/whatsapp/webhook"
     return render_template(
         "admin.html",
         users=users,
@@ -198,6 +202,8 @@ def admin_panel():
         must_change_password=must_change,
         gemini_configured=bool(gkey),
         gemini_masked=(gkey[:4] + "…" + gkey[-4:]) if len(gkey) > 8 else "",
+        wa=wa,
+        wa_webhook=wa_webhook,
     )
 
 
@@ -730,6 +736,55 @@ def api_admin_gemini_key():
     key = (payload.get("api_key") or "").strip()
     ai_parse.set_gemini_api_key(key)
     return jsonify({"ok": True, "configured": bool(key)})
+
+
+@app.route("/api/admin/whatsapp", methods=["GET", "POST"])
+@admin_required
+def api_admin_whatsapp():
+    import green_api
+
+    if request.method == "GET":
+        return jsonify({"ok": True, **green_api.get_public_config()})
+
+    payload = request.get_json(force=True, silent=True) or {}
+    token = (payload.get("api_token") or "").strip()
+    keep = bool(payload.get("keep_token")) and not token
+    green_api.save_config(
+        id_instance=(payload.get("id_instance") or "").strip(),
+        api_token=token,
+        allowed_phone=(payload.get("allowed_phone") or "").strip(),
+        user_id=str(payload.get("user_id") or "").strip(),
+        api_url=(payload.get("api_url") or "").strip(),
+        media_url=(payload.get("media_url") or "").strip(),
+        keep_token=keep,
+    )
+    return jsonify({"ok": True, **green_api.get_public_config()})
+
+
+@app.route("/api/whatsapp/webhook", methods=["GET", "POST"])
+def api_whatsapp_webhook():
+    """
+    نقطة استقبال إشعارات Green API.
+    في لوحة Green API ضع هذا الرابط كـ Webhook URL.
+    يقبل فقط الرسائل من الرقم المحدد في الإعدادات.
+    """
+    import green_api
+
+    if request.method == "GET":
+        return jsonify(
+            {
+                "ok": True,
+                "service": "moth-whatsapp-webhook",
+                "configured": green_api.is_configured(),
+            }
+        )
+
+    payload = request.get_json(force=True, silent=True) or {}
+    try:
+        result = green_api.handle_webhook(payload)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify(result)
 
 
 @app.route("/api/admin/users/<int:user_id>/renew", methods=["POST"])
