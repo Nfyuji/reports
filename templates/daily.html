@@ -24,8 +24,11 @@
   <section class="d-card header-card">
     <h2>بيانات مشتركة</h2>
     <div class="d-grid">
-      <label>اسم المدرسة<input id="school" type="text" autocomplete="organization" /></label>
-      <label>الرقم الوزاري<input id="ministry" type="text" inputmode="numeric" /></label>
+      <label class="full">اسم المدرسة
+        <select id="schoolSelect" class="school-select"></select>
+        <input id="school" type="text" hidden placeholder="اكتب اسم المدرسة" />
+      </label>
+      <label>الرقم الوزاري (تلقائي)<input id="ministry" type="text" inputmode="numeric" readonly /></label>
       <label>اسم المهندس<input id="engineer" type="text" autocomplete="name" /></label>
       <label>مزود الخدمة<input id="provider" type="text" /></label>
       <label>رقم المجموعة<input id="group" type="text" /></label>
@@ -78,6 +81,7 @@
   <div class="toast" id="toast" hidden></div>
   <div class="saving" id="saving" hidden><div class="spinner"></div><p>جاري الحفظ…</p></div>
 
+  <script src="/static/js/schools.js"></script>
   <script src="/static/js/daily.js"></script>
 </body>
 </html>

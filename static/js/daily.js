@@ -39,9 +39,19 @@
       .replace(/"/g, "&quot;");
   }
 
+  const schoolSelect = $("#schoolSelect");
+  const schoolCustom = $("#school");
+  if (window.bindSchoolSelect) {
+    window.bindSchoolSelect(schoolSelect, $("#ministry"), schoolCustom);
+  }
+
   function readHeader() {
+    const schoolName =
+      schoolSelect && schoolSelect.getSchoolName
+        ? schoolSelect.getSchoolName()
+        : schoolCustom.value.trim();
     return {
-      school: $("#school").value.trim(),
+      school: schoolName,
       ministry_no: $("#ministry").value.trim(),
       engineer: $("#engineer").value.trim(),
       provider: $("#provider").value.trim(),
@@ -54,7 +64,6 @@
 
   function fillHeader(h) {
     state.header = h || {};
-    $("#school").value = h.school || "";
     $("#ministry").value = h.ministry_no || "";
     $("#engineer").value = h.engineer || "";
     $("#provider").value = h.provider || "";
@@ -62,6 +71,11 @@
     $("#day").value = h.day || "";
     $("#month").value = h.month || "";
     $("#year").value = h.year || "";
+    if (schoolSelect && schoolSelect.setFromName) {
+      schoolSelect.setFromName(h.school || "");
+    } else {
+      schoolCustom.value = h.school || "";
+    }
   }
 
   function currentSheet() {

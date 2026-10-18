@@ -61,7 +61,11 @@ html, body {
   color: var(--muted);
   font-weight: 700;
 }
-.d-grid input {
+.d-grid label.full {
+  grid-column: 1 / -1;
+}
+.d-grid input,
+.d-grid select {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.7rem 0.75rem;
@@ -69,6 +73,13 @@ html, body {
   color: var(--ink);
   background: #fbfdfc;
   min-height: 44px;
+  width: 100%;
+}
+.d-grid select {
+  cursor: pointer;
+}
+.d-grid input[readonly] {
+  background: #eef3f0;
 }
 
 .sheet-tabs {

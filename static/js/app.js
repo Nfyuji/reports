@@ -42,19 +42,33 @@
     return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
   }
 
+  const schoolSelect = $("#fSchoolSelect");
+  const schoolCustom = $("#fSchool");
+  if (window.bindSchoolSelect) {
+    window.bindSchoolSelect(schoolSelect, $("#fMinistry"), schoolCustom);
+  }
+
   function fillCover(cover) {
     state.cover = { ...cover };
     $("#fTitle").value = cover.title || "";
-    $("#fSchool").value = cover.school || "";
     $("#fMinistry").value = cover.ministry_no || "";
     $("#fEngineer").value = cover.engineer || "";
     $("#fDate").value = cover.date || todayDateStr();
+    if (schoolSelect && schoolSelect.setFromName) {
+      schoolSelect.setFromName(cover.school || "");
+    } else {
+      schoolCustom.value = cover.school || "";
+    }
   }
 
   function readCover() {
+    const schoolName =
+      schoolSelect && schoolSelect.getSchoolName
+        ? schoolSelect.getSchoolName()
+        : schoolCustom.value.trim();
     return {
       title: $("#fTitle").value.trim(),
-      school: $("#fSchool").value.trim(),
+      school: schoolName,
       ministry_no: $("#fMinistry").value.trim(),
       engineer: $("#fEngineer").value.trim(),
       // تاريخ اليوم عند الحفظ دائماً

@@ -65,13 +65,14 @@
           <span>عنوان التقرير</span>
           <input name="title" id="fTitle" type="text" />
         </label>
-        <label class="field">
+        <label class="field full">
           <span>اسم المدرسة</span>
-          <input name="school" id="fSchool" type="text" />
+          <select id="fSchoolSelect" class="school-select"></select>
+          <input name="school" id="fSchool" type="text" hidden placeholder="اكتب اسم المدرسة" />
         </label>
         <label class="field">
-          <span>الرقم الوزاري</span>
-          <input name="ministry_no" id="fMinistry" type="text" />
+          <span>الرقم الوزاري (تلقائي)</span>
+          <input name="ministry_no" id="fMinistry" type="text" readonly />
         </label>
         <label class="field">
           <span>اسم المهندس</span>
@@ -140,6 +141,7 @@
     <p>جاري الحفظ على نسختك الخاصة…</p>
   </div>
 
+  <script src="/static/js/schools.js"></script>
   <script src="/static/js/nav.js"></script>
   <script src="/static/js/app.js"></script>
 </body>

@@ -350,6 +350,30 @@ a {
   color: var(--navy);
 }
 
+.field select.school-select,
+.school-select {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  padding: 0.75rem 0.95rem;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--ink);
+  min-height: 48px;
+  outline: none;
+  cursor: pointer;
+}
+
+.field select.school-select:focus {
+  border-color: rgba(111, 145, 124, 0.7);
+  box-shadow: 0 0 0 4px rgba(111, 145, 124, 0.18);
+}
+
+.field input[readonly] {
+  background: rgba(238, 243, 240, 0.95);
+}
+
 .field textarea {
   width: 100%;
   max-width: 100%;
