@@ -83,14 +83,19 @@ def get_public_config() -> dict[str, Any]:
 
 
 def normalize_phone(phone: str) -> str:
-    """يحول أي شكل إلى أرقام دولية بدون + مثل 9665xxxxxxxx"""
+    """يحول أي شكل إلى أرقام دولية بدون + مثل 967714705660"""
     digits = re.sub(r"\D", "", phone or "")
     if digits.startswith("00"):
         digits = digits[2:]
-    # محلي سعودي 05xxxxxxxx
-    if digits.startswith("05") and len(digits) == 10:
+    # يمني محلي: 07xxxxxxxx → 9677xxxxxxxx
+    if digits.startswith("07") and len(digits) == 10:
+        digits = "967" + digits[1:]
+    elif digits.startswith("7") and len(digits) == 9:
+        digits = "967" + digits
+    # سعودي محلي: 05xxxxxxxx → 9665xxxxxxxx
+    elif digits.startswith("05") and len(digits) == 10:
         digits = "966" + digits[1:]
-    if digits.startswith("5") and len(digits) == 9:
+    elif digits.startswith("5") and len(digits) == 9:
         digits = "966" + digits
     return digits
 
