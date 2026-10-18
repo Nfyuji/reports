@@ -203,7 +203,8 @@ def _rebuild_cover_details(shape, cover: dict[str, str]) -> None:
     school = (cover.get("school") or "").strip()
     ministry = (cover.get("ministry_no") or "").strip()
     engineer = (cover.get("engineer") or "").strip()
-    date = (cover.get("date") or "").strip() or today_date_str()
+    # دائماً تاريخ اليوم عند إنشاء/حفظ الملف
+    date = today_date_str()
 
     lines = [
         f"اسم المدرسة :{school}",
@@ -239,8 +240,7 @@ def _is_cover_details_shape(shape) -> bool:
 def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
     slide = prs.slides[0]
     data = dict(cover)
-    if not (data.get("date") or "").strip():
-        data["date"] = today_date_str()
+    data["date"] = today_date_str()
 
     details = []
     for shape in slide.shapes:

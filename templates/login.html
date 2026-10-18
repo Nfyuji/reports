@@ -25,10 +25,14 @@
     <div class="auth-error">{{ error }}</div>
     {% endif %}
 
-    <form method="post" class="auth-form" autocomplete="off">
+    <form method="post" class="auth-form" autocomplete="on">
       <label class="field">
         <span>رقم الاشتراك</span>
-        <input name="access_code" type="text" inputmode="numeric" placeholder="مثال: 48291763" required autofocus />
+        <input name="access_code" type="text" inputmode="numeric" autocomplete="username" placeholder="مثال: 48291763" required autofocus />
+      </label>
+      <label class="remember-row">
+        <input type="checkbox" name="remember" value="1" checked />
+        <span>حفظ الدخول في هذا المتصفح (30 يوماً)</span>
       </label>
       <button type="submit" class="btn primary full">دخول إلى مساحتي</button>
     </form>

@@ -23,10 +23,14 @@
     {% if error %}
     <div class="auth-error">{{ error }}</div>
     {% endif %}
-    <form method="post" class="auth-form">
+    <form method="post" class="auth-form" autocomplete="on">
       <label class="field">
         <span>كلمة مرور الإدارة</span>
-        <input name="password" type="password" required autofocus />
+        <input name="password" type="password" autocomplete="current-password" required autofocus />
+      </label>
+      <label class="remember-row">
+        <input type="checkbox" name="remember" value="1" checked />
+        <span>حفظ الدخول في هذا المتصفح (30 يوماً)</span>
       </label>
       <button type="submit" class="btn primary full">دخول</button>
     </form>

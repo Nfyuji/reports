@@ -57,7 +57,8 @@
       school: $("#fSchool").value.trim(),
       ministry_no: $("#fMinistry").value.trim(),
       engineer: $("#fEngineer").value.trim(),
-      date: $("#fDate").value.trim() || todayDateStr(),
+      // تاريخ اليوم عند الحفظ دائماً
+      date: todayDateStr(),
     };
   }
 

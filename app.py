@@ -9,6 +9,8 @@ import uuid
 from functools import wraps
 from pathlib import Path
 
+from datetime import timedelta
+
 from flask import (
     Flask,
     jsonify,
@@ -28,6 +30,10 @@ BASE = Path(__file__).resolve().parent
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 250 * 1024 * 1024
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+# جلسة طويلة حتى يحفظ المتصفح الدخول
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # تهيئة قاعدة البيانات عند تشغيل gunicorn أيضاً
 auth_store.init_db()
@@ -118,11 +124,13 @@ def login():
     error = None
     if request.method == "POST":
         code = (request.form.get("access_code") or "").strip()
+        remember = request.form.get("remember") in ("1", "on", "true", "yes")
         user, err = auth_store.authenticate(code)
         if err:
             error = err
         else:
             session.clear()
+            session.permanent = remember or True  # افتراضياً يحفظ الدخول
             session["user_id"] = user.id
             session["display_name"] = user.display_name
             return redirect(url_for("hub"))
@@ -165,7 +173,9 @@ def admin_login():
     error = None
     if request.method == "POST":
         password = request.form.get("password") or ""
+        remember = request.form.get("remember") in ("1", "on", "true", "yes")
         if password == auth_store.get_admin_password():
+            session.permanent = remember or True
             session["is_admin"] = True
             return redirect(url_for("admin_panel"))
         error = "كلمة المرور غير صحيحة"
