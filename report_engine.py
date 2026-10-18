@@ -52,6 +52,11 @@ PHOTO_TITLE = " صور الملاحظات وصور عامة للمبنى "
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 PHOTO_SEED_PATH = ASSETS_DIR / "photo_seed.pptx"
 
+# خط وعناوين/بيانات الغلاف والملاحظات
+REPORT_FONT = "Times New Roman"
+REPORT_FONT_SIZE_PT = 36
+REPORT_FONT_SIZE_SZ = str(REPORT_FONT_SIZE_PT * 100)  # OOXML: hundredths of a point
+
 
 def find_report_file(folder: Path | None = None) -> Path:
     folder = folder or Path(__file__).resolve().parent
@@ -148,14 +153,35 @@ def _parse_cover(prs: Presentation) -> dict[str, str]:
     }
 
 
+def _apply_report_font(rPr) -> None:
+    """Times New Roman بحجم 36 للغلاف والملاحظات."""
+    rPr.set("sz", REPORT_FONT_SIZE_SZ)
+    rPr.set("lang", "ar-SA")
+    for tag in ("latin", "ea", "cs"):
+        el = rPr.find(qn(f"a:{tag}"))
+        if el is None:
+            el = etree.SubElement(rPr, qn(f"a:{tag}"))
+        el.set("typeface", REPORT_FONT)
+    if rPr.find(qn("a:rtl")) is None:
+        etree.SubElement(rPr, qn("a:rtl"))
+
+
+def _set_run_report_font(run) -> None:
+    try:
+        run.font.name = REPORT_FONT
+        run.font.size = Pt(REPORT_FONT_SIZE_PT)
+    except Exception:
+        pass
+
+
 def _set_single_line_paragraph(p_el, line: str, template_p) -> None:
-    """يجعل الفقرة تشغيلاً واحداً بنص كامل مع RTL مثل القالب."""
+    """يجعل الفقرة تشغيلاً واحداً بنص كامل مع RTL + Times New Roman 36."""
     # امسح التشغيلات الحالية
     for child in list(p_el):
         if etree.QName(child).localname == "r":
             p_el.remove(child)
 
-    # خذ rPr من القالب إن أمكن
+    # خذ rPr من القالب إن أمكن ثم افرض الخط/الحجم
     src_r = None
     if template_p is not None:
         runs = template_p.findall(qn("a:r"))
@@ -168,17 +194,10 @@ def _set_single_line_paragraph(p_el, line: str, template_p) -> None:
         r.insert(0, rPr)
     else:
         rPr = etree.SubElement(r, qn("a:rPr"))
-        rPr.set("lang", "ar-SA")
-        rPr.set("sz", "4165")
         solid = etree.SubElement(rPr, qn("a:solidFill"))
         etree.SubElement(solid, qn("a:srgbClr")).set("val", "083144")
-        for tag in ("latin", "ea", "cs"):
-            etree.SubElement(rPr, qn(f"a:{tag}")).set("typeface", "Tajawal")
-        etree.SubElement(rPr, qn("a:rtl"))
 
-    if rPr.find(qn("a:rtl")) is None:
-        etree.SubElement(rPr, qn("a:rtl"))
-    rPr.set("lang", "ar-SA")
+    _apply_report_font(rPr)
 
     t = etree.SubElement(r, qn("a:t"))
     t.text = line
@@ -248,10 +267,12 @@ def _update_cover(prs: Presentation, cover: dict[str, str]) -> None:
             continue
         if shape.name == "TextBox 2":
             if shape.text_frame.paragraphs[0].runs:
+                run = shape.text_frame.paragraphs[0].runs[0]
                 _set_run_text(
-                    shape.text_frame.paragraphs[0].runs[0],
+                    run,
                     cover.get("title", "").strip() or "التقرير الفني لحالة المبنى",
                 )
+                _set_run_report_font(run)
             continue
         blob = shape.text or ""
         if "اسم المدرسة" in blob or "الرقم الوزاري" in blob:
@@ -311,7 +332,7 @@ def _extract_observations_from_xml(slide_xml: bytes) -> list[str]:
 
 
 def _obs_paragraph_xml(text: str) -> etree._Element:
-    """فقرة ملاحظة بنفس تنسيق القالب (رصاصة Wingdings + Tajawal)."""
+    """فقرة ملاحظة: رصاصة Wingdings + Times New Roman 36."""
     p = etree.Element(qn("a:p"))
     pPr = etree.SubElement(p, qn("a:pPr"))
     pPr.set("marL", "914400")
@@ -329,15 +350,10 @@ def _obs_paragraph_xml(text: str) -> etree._Element:
 
     r = etree.SubElement(p, qn("a:r"))
     rPr = etree.SubElement(r, qn("a:rPr"))
-    rPr.set("lang", "ar-SA")
-    rPr.set("sz", "4165")
     rPr.set("dirty", "0")
     solid = etree.SubElement(rPr, qn("a:solidFill"))
     etree.SubElement(solid, qn("a:srgbClr")).set("val", "083144")
-    etree.SubElement(rPr, qn("a:latin")).set("typeface", "Tajawal")
-    etree.SubElement(rPr, qn("a:ea")).set("typeface", "Tajawal")
-    etree.SubElement(rPr, qn("a:cs")).set("typeface", "Tajawal")
-    etree.SubElement(rPr, qn("a:rtl"))
+    _apply_report_font(rPr)
     t = etree.SubElement(r, qn("a:t"))
     t.text = text
     return p
@@ -677,10 +693,10 @@ def _build_photo_slide(prs: Presentation):
     p.alignment = PP_ALIGN.RIGHT
     run = p.add_run()
     run.text = PHOTO_TITLE.strip()
-    run.font.size = Pt(28)
+    run.font.size = Pt(REPORT_FONT_SIZE_PT)
     run.font.bold = True
     run.font.color.rgb = RGBColor(0x08, 0x31, 0x44)
-    run.font.name = "Tajawal"
+    run.font.name = REPORT_FONT
 
     for i, ((fl, ft, fw, fh), (pl, pt, pw, ph)) in enumerate(zip(FRAME_SLOTS, PHOTO_SLOTS)):
         _add_double_frame(slide, i, fl, ft, fw, fh)
