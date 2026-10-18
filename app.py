@@ -758,7 +758,20 @@ def api_admin_whatsapp():
         media_url=(payload.get("media_url") or "").strip(),
         keep_token=keep,
     )
-    return jsonify({"ok": True, **green_api.get_public_config()})
+    webhook_result = None
+    if payload.get("set_webhook"):
+        wh = request.host_url.rstrip("/") + "/api/whatsapp/webhook"
+        try:
+            webhook_result = green_api.configure_webhook(wh)
+        except Exception as e:
+            webhook_result = {"ok": False, "error": str(e)}
+    return jsonify(
+        {
+            "ok": True,
+            **green_api.get_public_config(),
+            "webhook": webhook_result,
+        }
+    )
 
 
 @app.route("/api/whatsapp/webhook", methods=["GET", "POST"])

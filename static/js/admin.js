@@ -91,7 +91,10 @@
       api_token: token,
       allowed_phone: document.getElementById("waPhone").value.trim(),
       user_id: document.getElementById("waUserId").value.trim(),
+      api_url: document.getElementById("waApiUrl")?.value.trim() || "",
+      media_url: document.getElementById("waMediaUrl")?.value.trim() || "",
       keep_token: !token,
+      set_webhook: true,
     };
     const res = await fetch("/api/admin/whatsapp", {
       method: "POST",

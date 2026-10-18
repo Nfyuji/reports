@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -17,14 +18,26 @@ import auth_store
 INBOX: dict[str, list[tuple[bytes, str, str]]] = {}
 
 
+def _env_or_setting(env_key: str, setting_key: str, default: str = "") -> str:
+    """يفضّل متغير البيئة (للاستضافة) ثم إعداد قاعدة البيانات."""
+    val = (os.environ.get(env_key) or "").strip()
+    if val:
+        return val
+    return auth_store.get_setting(setting_key, default)
+
+
 def _cfg() -> dict[str, str]:
     return {
-        "id_instance": auth_store.get_setting("green_id_instance"),
-        "api_token": auth_store.get_setting("green_api_token"),
-        "api_url": auth_store.get_setting("green_api_url", "https://api.green-api.com").rstrip("/"),
-        "media_url": auth_store.get_setting("green_media_url", "https://media.green-api.com").rstrip("/"),
-        "allowed_phone": auth_store.get_setting("green_allowed_phone"),
-        "user_id": auth_store.get_setting("green_user_id"),
+        "id_instance": _env_or_setting("GREEN_ID_INSTANCE", "green_id_instance"),
+        "api_token": _env_or_setting("GREEN_API_TOKEN", "green_api_token"),
+        "api_url": _env_or_setting(
+            "GREEN_API_URL", "green_api_url", "https://api.green-api.com"
+        ).rstrip("/"),
+        "media_url": _env_or_setting(
+            "GREEN_MEDIA_URL", "green_media_url", "https://media.green-api.com"
+        ).rstrip("/"),
+        "allowed_phone": _env_or_setting("GREEN_ALLOWED_PHONE", "green_allowed_phone"),
+        "user_id": _env_or_setting("GREEN_USER_ID", "green_user_id"),
     }
 
 
@@ -210,15 +223,76 @@ def inbox_photos(phone: str) -> list[tuple[bytes, str, str]]:
 HELP_TEXT = (
     "أوامر واتساب للتقرير:\n"
     "• أرسل الصور هنا مباشرة\n"
-    "• اكتب: جاهز  أو  ارسال  → يجهّز الملف ويرسله لك\n"
+    "• لما تخلص اكتب: ايوه أو نعم أو جاهز → يرسل لك العرض جاهز\n"
+    "• اكتب: لا → تكمل إرسال صور\n"
     "• اكتب: مسح → يحذف الصور المنتظرة\n"
     "• اكتب: عدد → كم صورة وصلت\n"
     "• اكتب: مساعدة → هذا الشرح"
 )
 
+# ردود الموافقة / الرفض
+_YES = {
+    "ايوه",
+    "ايوا",
+    "ايوة",
+    "نعم",
+    "اجل",
+    "أجل",
+    "تمام",
+    "خلص",
+    "خلاص",
+    "جاهز",
+    "ارسال",
+    "ارسل",
+    "تقرير",
+    "ready",
+    "send",
+    "yes",
+    "y",
+    "ok",
+    "اوك",
+    "أوك",
+}
+_NO = {"لا", "لأ", "لاا", "no", "n", "كمل", "زياده", "زيادة"}
+
+
+def _norm_cmd(text: str) -> str:
+    t = (text or "").strip()
+    t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ة", "ه")
+    return t.lower()
+
+
+def _confirm_prompt(n: int) -> str:
+    return (
+        f"وصلتني {n} صورة ✅\n"
+        f"هل هذه كلها؟\n"
+        f"• اكتب: ايوه  → أرسل لك العرض جاهز\n"
+        f"• أو كمّل إرسال صور\n"
+        f"• اكتب: مسح  → أبدأ من جديد"
+    )
+
+
+def configure_webhook(webhook_url: str) -> dict[str, Any]:
+    """يضبط Webhook تلقائياً في Green API."""
+    if not is_configured():
+        return {"ok": False, "error": "غير مضبوط"}
+    url = (webhook_url or "").strip()
+    if not url:
+        return {"ok": False, "error": "لا يوجد رابط"}
+    return _http_json(
+        _api_url("setSettings"),
+        {
+            "webhookUrl": url,
+            "incomingWebhook": "yes",
+            "outgoingWebhook": "no",
+            "stateWebhook": "no",
+            "outgoingAPIMessageWebhook": "no",
+        },
+    )
+
 
 def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
-    """يعالج إشعار Green API ويعيد ملخصاً لما تم."""
+    """يعالج إشعار Green API — يرد فقط على الرقم المسموح، ويصمت لغيره."""
     if not is_configured():
         return {"ok": False, "error": "Green API غير مضبوط"}
 
@@ -228,6 +302,7 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
 
     sender = (payload.get("senderData") or {})
     chat_id = sender.get("chatId") or sender.get("sender") or ""
+    # صمت تام لأي رقم غير المسموح — لا رد ولا معالجة
     if not chat_id or not is_allowed_sender(chat_id):
         return {"ok": True, "ignored": "unauthorized_sender", "chatId": chat_id}
 
@@ -235,9 +310,17 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     msg = payload.get("messageData") or {}
     mtype = msg.get("typeMessage") or ""
 
-    # صور
-    if mtype == "imageMessage":
+    # صور (أو مستند صورة)
+    if mtype in {"imageMessage", "documentMessage"}:
         fdata = msg.get("fileMessageData") or {}
+        mime = (fdata.get("mimeType") or "").lower()
+        name = fdata.get("fileName") or "photo.jpg"
+        if mtype == "documentMessage" and not (
+            mime.startswith("image/") or name.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+        ):
+            send_text(chat_id, "أرسل صور فقط من فضلك.")
+            return {"ok": True, "ignored": "non_image_document"}
+
         url = fdata.get("downloadUrl") or ""
         if not url:
             send_text(chat_id, "تعذر تحميل الصورة (لا يوجد رابط).")
@@ -247,9 +330,10 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         except Exception as e:
             send_text(chat_id, f"فشل تحميل الصورة: {e}")
             return {"ok": False, "error": str(e)}
-        name = fdata.get("fileName") or "photo.jpg"
-        n = inbox_add(phone, blob, ".jpg", name)
-        send_text(chat_id, f"تم استلام الصورة ✅\nالمجموع الآن: {n}\nعند الانتهاء اكتب: جاهز")
+
+        ext = ".png" if ("png" in mime or name.lower().endswith(".png")) else ".jpg"
+        n = inbox_add(phone, blob, ext, name)
+        send_text(chat_id, _confirm_prompt(n))
         return {"ok": True, "action": "photo", "count": n}
 
     # نص
@@ -262,35 +346,48 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     if not text:
         return {"ok": True, "ignored": "empty_text"}
 
-    low = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").strip().lower()
+    low = _norm_cmd(text)
 
-    if low in {"مساعدة", "help", "?", "؟"}:
+    if low in {"مساعده", "help", "?", "؟"}:
         send_text(chat_id, HELP_TEXT)
         return {"ok": True, "action": "help"}
 
     if low in {"مسح", "حذف", "clear"}:
         inbox_clear(phone)
-        send_text(chat_id, "تم مسح الصور المنتظرة.")
+        send_text(chat_id, "تم مسح الصور. أرسل صور جديدة متى ما حاب.")
         return {"ok": True, "action": "clear"}
 
     if low in {"عدد", "count"}:
-        send_text(chat_id, f"الصور المنتظرة: {inbox_count(phone)}")
+        n = inbox_count(phone)
+        if n:
+            send_text(chat_id, _confirm_prompt(n))
+        else:
+            send_text(chat_id, "ما عندي صور بعد. أرسل الصور هنا.")
         return {"ok": True, "action": "count"}
 
-    if low in {"جاهز", "ارسال", "إرسال", "ارسل", "أرسل", "تقرير", "ready", "send"}:
+    if low in _NO:
+        n = inbox_count(phone)
+        send_text(
+            chat_id,
+            f"تمام، كمّل إرسال الصور.\nعندي حالياً: {n}\nولما تخلص اكتب: ايوه",
+        )
+        return {"ok": True, "action": "continue"}
+
+    if low in _YES or low.replace(" ", "") in _YES:
         return _build_and_send_report(chat_id, phone)
 
-    send_text(
-        chat_id,
-        "لم أفهم الأمر.\nأرسل صوراً أو اكتب: جاهز / مسح / مساعدة",
-    )
+    n = inbox_count(phone)
+    if n:
+        send_text(chat_id, _confirm_prompt(n))
+    else:
+        send_text(chat_id, "أرسل الصور هنا، ولما تخلص اكتب: ايوه")
     return {"ok": True, "action": "unknown_cmd"}
 
 
 def _build_and_send_report(chat_id: str, phone: str) -> dict[str, Any]:
     photos = inbox_photos(phone)
     if not photos:
-        send_text(chat_id, "لا توجد صور بعد. أرسل صوراً ثم اكتب: جاهز")
+        send_text(chat_id, "ما عندي صور بعد. أرسل الصور أولاً ثم اكتب: ايوه")
         return {"ok": False, "error": "no_photos"}
 
     uid_raw = _cfg()["user_id"]

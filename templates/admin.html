@@ -136,15 +136,23 @@
       <form id="whatsappForm" class="form-grid" autocomplete="off">
         <label class="field">
           <span>idInstance</span>
-          <input id="waIdInstance" type="text" value="{{ wa.id_instance if wa else '' }}" placeholder="مثال: 1101...." />
+          <input id="waIdInstance" type="text" value="{{ wa.id_instance if wa else '' }}" placeholder="مثال: 7107...." />
         </label>
         <label class="field">
           <span>apiTokenInstance</span>
           <input id="waToken" type="password" placeholder="{% if wa and wa.api_token_masked %}المحفوظ: {{ wa.api_token_masked }} — اتركه فارغاً إن لم يتغير{% else %}الصق التوكن{% endif %}" />
         </label>
         <label class="field">
-          <span>رقم واتساب المسموح فقط (دولي)</span>
-          <input id="waPhone" type="text" value="{{ wa.allowed_phone if wa else '' }}" placeholder="مثال: 9665xxxxxxxx" />
+          <span>apiUrl</span>
+          <input id="waApiUrl" type="text" value="{{ wa.api_url if wa else '' }}" placeholder="https://7107.api.greenapi.com" />
+        </label>
+        <label class="field">
+          <span>mediaUrl</span>
+          <input id="waMediaUrl" type="text" value="{{ wa.media_url if wa else '' }}" placeholder="https://7107.api.greenapi.com" />
+        </label>
+        <label class="field">
+          <span>الرقم المسموح فقط (من يرسل الصور)</span>
+          <input id="waPhone" type="text" value="{{ wa.allowed_phone if wa else '' }}" placeholder="مثال: 96714705660" />
         </label>
         <label class="field">
           <span>اربط بمستخدم النظام (ID)</span>
@@ -158,15 +166,15 @@
           </select>
         </label>
         <label class="field full">
-          <span>رابط Webhook (انسخه إلى لوحة Green API)</span>
+          <span>رابط Webhook (يُضبط تلقائياً عند الحفظ)</span>
           <input id="waWebhook" type="text" readonly value="{{ wa_webhook }}" onclick="this.select()" />
         </label>
         <div class="field full">
-          <button type="submit" class="btn soft">حفظ إعدادات واتساب</button>
+          <button type="submit" class="btn soft">حفظ وضبط واتساب</button>
         </div>
       </form>
       <p class="auth-note" style="margin-top:0.75rem">
-        الأوامر من الرقم المسموح: أرسل الصور ثم اكتب <strong>جاهز</strong> لاستلام الملف · <strong>مسح</strong> · <strong>مساعدة</strong>
+        من الرقم المسموح فقط: أرسل الصور → يرد «هل هذه كلها؟» → اكتب <strong>ايوه</strong> فيرسل العرض جاهز. أي رقم آخر يُتجاهل بلا رد.
       </p>
     </section>
 
