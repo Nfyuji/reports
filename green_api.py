@@ -6,6 +6,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
+import uuid
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -13,9 +16,10 @@ from typing import Any
 
 import auth_store
 
-# صور واردة مؤقتاً حسب رقم المرسل
-# phone -> list[(bytes, ext, name)]
-INBOX: dict[str, list[tuple[bytes, str, str]]] = {}
+# انتظر دقيقة صمت بعد آخر صورة قبل سؤال التأكيد
+PHOTO_QUIET_SECONDS = 60
+_watchdog_started = False
+_watchdog_lock = threading.Lock()
 
 
 def _env_or_setting(env_key: str, setting_key: str, default: str = "") -> str:
@@ -207,32 +211,167 @@ def download_url_bytes(url: str) -> bytes:
         return resp.read()
 
 
+def _inbox_dir(phone: str) -> Path:
+    auth_store.ensure_dirs()
+    d = auth_store.DATA_DIR / "wa_inbox" / normalize_phone(phone)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _session_path(phone: str) -> Path:
+    auth_store.ensure_dirs()
+    return auth_store.DATA_DIR / "wa_sessions" / f"{normalize_phone(phone)}.json"
+
+
+def session_get(phone: str) -> dict[str, Any]:
+    path = _session_path(phone)
+    if not path.exists():
+        return {
+            "stage": "idle",
+            "chat_id": "",
+            "last_photo_at": 0.0,
+            "ack_sent": False,
+            "confirm_sent": False,
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "stage": "idle",
+            "chat_id": "",
+            "last_photo_at": 0.0,
+            "ack_sent": False,
+            "confirm_sent": False,
+        }
+
+
+def session_set(phone: str, **kwargs: Any) -> dict[str, Any]:
+    sess = session_get(phone)
+    sess.update(kwargs)
+    path = _session_path(phone)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sess, ensure_ascii=False), encoding="utf-8")
+    return sess
+
+
+def session_clear(phone: str) -> None:
+    path = _session_path(phone)
+    if path.exists():
+        path.unlink(missing_ok=True)
+
+
 def inbox_add(phone: str, blob: bytes, ext: str, name: str) -> int:
-    key = normalize_phone(phone)
-    INBOX.setdefault(key, []).append((blob, ext, name))
-    return len(INBOX[key])
+    d = _inbox_dir(phone)
+    safe_ext = ext if ext.startswith(".") else f".{ext}"
+    fname = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}{safe_ext}"
+    meta = {"name": name or fname, "ext": safe_ext}
+    (d / fname).write_bytes(blob)
+    (d / f"{fname}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    return inbox_count(phone)
 
 
 def inbox_clear(phone: str) -> None:
-    INBOX.pop(normalize_phone(phone), None)
+    d = _inbox_dir(phone)
+    if d.exists():
+        for p in d.iterdir():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    session_clear(phone)
 
 
 def inbox_count(phone: str) -> int:
-    return len(INBOX.get(normalize_phone(phone), []))
+    d = _inbox_dir(phone)
+    if not d.exists():
+        return 0
+    return len([p for p in d.iterdir() if p.is_file() and p.suffix.lower() != ".json"])
 
 
 def inbox_photos(phone: str) -> list[tuple[bytes, str, str]]:
-    return list(INBOX.get(normalize_phone(phone), []))
+    d = _inbox_dir(phone)
+    if not d.exists():
+        return []
+    out: list[tuple[bytes, str, str]] = []
+    files = sorted(
+        [p for p in d.iterdir() if p.is_file() and p.suffix.lower() != ".json"],
+        key=lambda p: p.name,
+    )
+    for p in files:
+        name = p.name
+        ext = p.suffix or ".jpg"
+        meta_path = d / f"{p.name}.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                name = meta.get("name") or name
+                ext = meta.get("ext") or ext
+            except Exception:
+                pass
+        out.append((p.read_bytes(), ext, name))
+    return out
+
+
+def start_watchdog() -> None:
+    """مراقبة صمت الصور لمدة دقيقة ثم سؤال التأكيد مرة واحدة."""
+    global _watchdog_started
+    with _watchdog_lock:
+        if _watchdog_started:
+            return
+        _watchdog_started = True
+    t = threading.Thread(target=_watchdog_loop, name="wa-watchdog", daemon=True)
+    t.start()
+
+
+def _watchdog_loop() -> None:
+    while True:
+        time.sleep(5)
+        try:
+            _watchdog_tick()
+        except Exception:
+            continue
+
+
+def _watchdog_tick() -> None:
+    sess_dir = auth_store.DATA_DIR / "wa_sessions"
+    if not sess_dir.exists():
+        return
+    now = time.time()
+    for path in list(sess_dir.glob("*.json")):
+        try:
+            sess = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if sess.get("stage") != "collecting" or sess.get("confirm_sent"):
+            continue
+        last = float(sess.get("last_photo_at") or 0)
+        if not last or (now - last) < PHOTO_QUIET_SECONDS:
+            continue
+        phone = path.stem
+        n = inbox_count(phone)
+        if n <= 0:
+            continue
+        # مطالبة ذرّية تقريباً: نعلّم confirm_sent قبل الإرسال
+        sess["stage"] = "await_confirm"
+        sess["confirm_sent"] = True
+        path.write_text(json.dumps(sess, ensure_ascii=False), encoding="utf-8")
+        chat_id = sess.get("chat_id") or phone_to_chat_id(phone)
+        try:
+            send_text(chat_id, _confirm_prompt(n))
+        except Exception:
+            # أعد المحاولة لاحقاً
+            sess["confirm_sent"] = False
+            sess["stage"] = "collecting"
+            path.write_text(json.dumps(sess, ensure_ascii=False), encoding="utf-8")
 
 
 HELP_TEXT = (
     "أوامر واتساب للتقرير:\n"
-    "• أرسل الصور هنا مباشرة\n"
-    "• لما تخلص اكتب: ايوه أو نعم أو جاهز → يرسل لك العرض جاهز\n"
-    "• اكتب: لا → تكمل إرسال صور\n"
-    "• اكتب: مسح → يحذف الصور المنتظرة\n"
-    "• اكتب: عدد → كم صورة وصلت\n"
-    "• اكتب: مساعدة → هذا الشرح"
+    "• أرسل كل الصور دفعة واحدة (أستقبل بهدوء دقيقة بعد آخر صورة)\n"
+    "• بعد السؤال اكتب: ايوه → ثم أرسل الملاحظات\n"
+    "• الملاحظات تُعبّئ الشريحة الأولى + نقاط الملاحظات عبر Gemini\n"
+    "• اكتب: مسح → حذف الصور والبدء من جديد\n"
+    "• اكتب: عدد / مساعدة"
 )
 
 # ردود الموافقة / الرفض
@@ -271,9 +410,18 @@ def _confirm_prompt(n: int) -> str:
     return (
         f"وصلتني {n} صورة ✅\n"
         f"هل هذه كلها؟\n"
-        f"• اكتب: ايوه  → أرسل لك العرض جاهز\n"
-        f"• أو كمّل إرسال صور\n"
-        f"• اكتب: مسح  → أبدأ من جديد"
+        f"• اكتب: ايوه → بعدها أطلب منك الملاحظات ثم أرسل العرض\n"
+        f"• أو كمّل إرسال صور (بانتظار دقيقة بعد آخر صورة)\n"
+        f"• اكتب: مسح → أبدأ من جديد"
+    )
+
+
+def _notes_prompt() -> str:
+    return (
+        "تمام ✅\n"
+        "أرسل الآن الملاحظات / نص التقرير كاملاً:\n"
+        "(المدرسة، رقم الوزارة، المهندس، والملاحظات…)\n"
+        "راح أعبّي الشريحة الأولى والملاحظات عبر Gemini ثم أرسل لك العرض جاهز."
     )
 
 
@@ -298,6 +446,7 @@ def configure_webhook(webhook_url: str) -> dict[str, Any]:
 
 def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     """يعالج إشعار Green API — يرد فقط على الرقم المسموح، ويصمت لغيره."""
+    start_watchdog()
     if not is_configured():
         return {"ok": False, "error": "Green API غير مضبوط"}
 
@@ -314,8 +463,9 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     phone = chat_id_to_phone(chat_id)
     msg = payload.get("messageData") or {}
     mtype = msg.get("typeMessage") or ""
+    sess = session_get(phone)
 
-    # صور (أو مستند صورة)
+    # صور (أو مستند صورة) — تجميع صامت ثم سؤال بعد دقيقة
     if mtype in {"imageMessage", "documentMessage"}:
         fdata = msg.get("fileMessageData") or {}
         mime = (fdata.get("mimeType") or "").lower()
@@ -338,8 +488,25 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
 
         ext = ".png" if ("png" in mime or name.lower().endswith(".png")) else ".jpg"
         n = inbox_add(phone, blob, ext, name)
-        send_text(chat_id, _confirm_prompt(n))
-        return {"ok": True, "action": "photo", "count": n}
+        first_ack = not sess.get("ack_sent")
+        session_set(
+            phone,
+            stage="collecting",
+            chat_id=chat_id,
+            last_photo_at=time.time(),
+            ack_sent=True,
+            confirm_sent=False,
+        )
+        # رسالة واحدة فقط عند أول صورة في الدفعة — بدون سؤال بعد كل صورة
+        if first_ack:
+            send_text(
+                chat_id,
+                "تم بدء استلام الصور ✅\n"
+                "أرسل كل الصور براحتك.\n"
+                f"بعد مرور دقيقة من آخر صورة راح أسألك: هل هذه كلها؟\n"
+                f"(الآن: {n})",
+            )
+        return {"ok": True, "action": "photo", "count": n, "quiet": True}
 
     # نص
     text = ""
@@ -352,6 +519,7 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "ignored": "empty_text"}
 
     low = _norm_cmd(text)
+    stage = sess.get("stage") or "idle"
 
     if low in {"مساعده", "help", "?", "؟"}:
         send_text(chat_id, HELP_TEXT)
@@ -359,40 +527,81 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
 
     if low in {"مسح", "حذف", "clear"}:
         inbox_clear(phone)
-        send_text(chat_id, "تم مسح الصور. أرسل صور جديدة متى ما حاب.")
+        send_text(chat_id, "تم المسح. أرسل الصور من جديد متى ما حاب.")
         return {"ok": True, "action": "clear"}
 
     if low in {"عدد", "count"}:
-        n = inbox_count(phone)
-        if n:
-            send_text(chat_id, _confirm_prompt(n))
-        else:
-            send_text(chat_id, "ما عندي صور بعد. أرسل الصور هنا.")
+        send_text(chat_id, f"الصور المستلمة الآن: {inbox_count(phone)}")
         return {"ok": True, "action": "count"}
 
     if low in _NO:
-        n = inbox_count(phone)
+        session_set(
+            phone,
+            stage="collecting",
+            chat_id=chat_id,
+            confirm_sent=False,
+            last_photo_at=time.time(),
+            ack_sent=True,
+        )
         send_text(
             chat_id,
-            f"تمام، كمّل إرسال الصور.\nعندي حالياً: {n}\nولما تخلص اكتب: ايوه",
+            f"تمام، كمّل إرسال الصور.\nعندي حالياً: {inbox_count(phone)}\n"
+            "بعد دقيقة من توقفك راح أسأل مرة ثانية.",
         )
         return {"ok": True, "action": "continue"}
 
+    # موافقة → اطلب الملاحظات (لا ترسل الملف بعد)
     if low in _YES or low.replace(" ", "") in _YES:
-        return _build_and_send_report(chat_id, phone)
+        if inbox_count(phone) <= 0:
+            send_text(chat_id, "ما عندي صور بعد. أرسل الصور أولاً.")
+            return {"ok": False, "error": "no_photos"}
+        session_set(phone, stage="await_notes", chat_id=chat_id, confirm_sent=True)
+        send_text(chat_id, _notes_prompt())
+        return {"ok": True, "action": "ask_notes"}
+
+    # مرحلة الملاحظات: أي نص طويل يُفسَّر عبر Gemini ثم يُرسل العرض
+    if stage == "await_notes":
+        return _parse_notes_and_send(chat_id, phone, text)
 
     n = inbox_count(phone)
-    if n:
-        send_text(chat_id, _confirm_prompt(n))
+    if stage in {"collecting", "await_confirm"} and n:
+        send_text(
+            chat_id,
+            f"عندي {n} صورة.\n"
+            "انتظر سؤال التأكيد بعد دقيقة من آخر صورة، أو اكتب: ايوه",
+        )
     else:
-        send_text(chat_id, "أرسل الصور هنا، ولما تخلص اكتب: ايوه")
+        send_text(chat_id, "أرسل الصور أولاً. للمساعدة اكتب: مساعدة")
     return {"ok": True, "action": "unknown_cmd"}
 
 
-def _build_and_send_report(chat_id: str, phone: str) -> dict[str, Any]:
+def _parse_notes_and_send(chat_id: str, phone: str, raw_text: str) -> dict[str, Any]:
+    send_text(chat_id, "جاري تحليل الملاحظات عبر Gemini وتعبئة الشريحة الأولى…")
+    try:
+        import ai_parse
+
+        parsed = ai_parse.parse_report_text(raw_text, prefer_gemini=True)
+    except Exception as e:
+        send_text(chat_id, f"فشل تحليل النص: {e}\nأعد إرسال الملاحظات.")
+        return {"ok": False, "error": str(e)}
+
+    return _build_and_send_report(
+        chat_id,
+        phone,
+        cover_override=parsed.get("cover") or {},
+        observations=parsed.get("observations") or [],
+    )
+
+
+def _build_and_send_report(
+    chat_id: str,
+    phone: str,
+    cover_override: dict[str, str] | None = None,
+    observations: list[str] | None = None,
+) -> dict[str, Any]:
     photos = inbox_photos(phone)
     if not photos:
-        send_text(chat_id, "ما عندي صور بعد. أرسل الصور أولاً ثم اكتب: ايوه")
+        send_text(chat_id, "ما عندي صور بعد. أرسل الصور أولاً ثم الملاحظات.")
         return {"ok": False, "error": "no_photos"}
 
     uid_raw = _cfg()["user_id"]
@@ -414,23 +623,23 @@ def _build_and_send_report(chat_id: str, phone: str) -> dict[str, Any]:
         path = auth_store.user_report_path(user)
         data = load_report(path)
         cover = dict(data.get("cover") or {})
-        cover["date"] = today_date_str()
+        if cover_override:
+            for k, v in cover_override.items():
+                if str(v or "").strip():
+                    cover[k] = str(v).strip()
+        cover["date"] = (cover.get("date") or "").strip() or today_date_str()
         if user.display_name and not (cover.get("engineer") or "").strip():
             cover["engineer"] = user.display_name
 
-        # دمج صور الملف الحالية + صور واتساب
-        existing = [
-            (ph["blob"], ".jpg" if "png" not in (ph.get("content_type") or "") else ".png")
-            for ph in (data.get("photos") or [])
-        ]
+        obs = observations if observations is not None else (data.get("observations") or [])
         wa_blobs = [(b, e) for b, e, _n in photos]
-        all_photos = existing + wa_blobs
 
+        # صور واتساب + بيانات الغلاف/الملاحظات من Gemini
         save_report(
             path,
             cover,
-            data.get("observations") or [],
-            all_photos,
+            obs,
+            wa_blobs,
             output_path=path,
         )
 
@@ -440,7 +649,10 @@ def _build_and_send_report(chat_id: str, phone: str) -> dict[str, Any]:
         date = (cover.get("date") or today_date_str()).replace("/", "-")
         fname = f"{school}_{eng}_{date}.pptx".replace(" ", "_")
 
-        send_text(chat_id, f"جاري إرسال التقرير… ({len(wa_blobs)} صورة من واتساب)")
+        send_text(
+            chat_id,
+            f"جاري إرسال العرض…\n{len(wa_blobs)} صورة · {len(obs)} ملاحظة",
+        )
         send_file_bytes(
             chat_id,
             file_bytes,

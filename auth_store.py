@@ -22,13 +22,30 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
-# على Render ضع Persistent Disk على /var/data وEnvironment: DATA_DIR=/var/data
+# على Render: Persistent Disk على /var/data وEnvironment: DATA_DIR=/var/data
+# بدون قرص دائم أي نشر جديد يمسح قاعدة البيانات والملفات — هذا سبب اختفاء البيانات.
 BASE = Path(__file__).resolve().parent
-DATA_ROOT = Path(os.environ.get("DATA_DIR", str(BASE)))
+
+
+def _resolve_data_root() -> Path:
+    env = (os.environ.get("DATA_DIR") or "").strip()
+    if env:
+        return Path(env)
+    var_data = Path("/var/data")
+    try:
+        if var_data.is_dir() and os.access(var_data, os.W_OK):
+            return var_data
+    except OSError:
+        pass
+    return BASE
+
+
+DATA_ROOT = _resolve_data_root()
 DATA_DIR = DATA_ROOT / "data"
 USERS_DIR = DATA_ROOT / "users"
 MASTER_DIR = DATA_ROOT / "master_templates"
 DB_PATH = DATA_DIR / "app.db"
+USING_PERSISTENT_DISK = DATA_ROOT != BASE
 
 # كلمة مرور لوحة الإدارة (يمكن تغييرها من الواجهة لاحقاً عبر الإعدادات)
 DEFAULT_ADMIN_PASSWORD = "admin2026"
@@ -65,9 +82,11 @@ class User:
 
 
 def ensure_dirs() -> None:
-    DATA_DIR.mkdir(exist_ok=True)
-    USERS_DIR.mkdir(exist_ok=True)
-    MASTER_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    USERS_DIR.mkdir(parents=True, exist_ok=True)
+    MASTER_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "wa_inbox").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "wa_sessions").mkdir(parents=True, exist_ok=True)
 
 
 @contextmanager

@@ -37,6 +37,19 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 # تهيئة قاعدة البيانات عند تشغيل gunicorn أيضاً
 auth_store.init_db()
+try:
+    import green_api
+
+    green_api.start_watchdog()
+    if not auth_store.USING_PERSISTENT_DISK:
+        print(
+            "تحذير: لا يوجد Persistent Disk — البيانات تُمسح مع كل نشر. "
+            "اضبط DATA_DIR=/var/data مع قرص دائم على Render."
+        )
+    else:
+        print(f"تخزين دائم: {auth_store.DATA_ROOT}")
+except Exception as _wa_boot_err:
+    print(f"تنبيه واتساب: {_wa_boot_err}")
 
 # صور كل مستخدم منفصلة: user_id -> {photo_id: (bytes, ext, name)}
 PHOTO_STORES: dict[int, dict[str, tuple[bytes, str, str]]] = {}
