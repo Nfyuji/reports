@@ -806,11 +806,35 @@ def api_whatsapp_webhook():
         )
 
     payload = request.get_json(force=True, silent=True) or {}
+    # احفظ رابط الموقع العام لروابط التحميل الاحتياطية
+    try:
+        os.environ.setdefault("PUBLIC_BASE_URL", request.host_url.rstrip("/"))
+    except Exception:
+        pass
     try:
         result = green_api.handle_webhook(payload)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
     return jsonify(result)
+
+
+@app.route("/api/whatsapp/download/<token>", methods=["GET"])
+def api_whatsapp_download(token: str):
+    """تحميل ملف التقرير الذي جهّزه واتساب (رابط مؤقت)."""
+    import green_api
+
+    got = green_api.pop_download(token)
+    if not got:
+        return "الرابط غير صالح أو انتهت صلاحيته", 404
+    data, name = got
+    from io import BytesIO
+
+    return send_file(
+        BytesIO(data),
+        as_attachment=True,
+        download_name=name,
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
 
 
 @app.route("/api/admin/users/<int:user_id>/renew", methods=["POST"])

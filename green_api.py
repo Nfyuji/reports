@@ -158,9 +158,80 @@ def send_text(chat_id: str, message: str) -> dict:
     )
 
 
+def _safe_filename(name: str) -> str:
+    """اسم ملف ASCII فقط للرفع عبر Green API."""
+    base = (name or "report.pptx").strip() or "report.pptx"
+    if not base.lower().endswith(".pptx"):
+        base = f"{base}.pptx"
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    cleaned = cleaned.strip("._") or "report.pptx"
+    if not cleaned.lower().endswith(".pptx"):
+        cleaned += ".pptx"
+    return cleaned[:120]
+
+
+def _compress_photo_blob(blob: bytes, ext: str, max_side: int = 1280, quality: int = 72) -> tuple[bytes, str]:
+    """يضغط الصورة لتقليل حجم العرض قبل الإرسال."""
+    try:
+        import io
+
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(blob))
+        if im.mode in ("RGBA", "P"):
+            im = im.convert("RGB")
+        im.thumbnail((max_side, max_side))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=quality, optimize=True)
+        return buf.getvalue(), ".jpg"
+    except Exception:
+        return blob, ext if ext.startswith(".") else f".{ext}"
+
+
+def _downloads_dir() -> Path:
+    auth_store.ensure_dirs()
+    d = auth_store.DATA_DIR / "wa_downloads"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def store_download(file_bytes: bytes, file_name: str) -> str:
+    """يحفظ الملف مؤقتاً ويعيد رمز تحميل."""
+    token = uuid.uuid4().hex
+    path = _downloads_dir() / f"{token}.pptx"
+    path.write_bytes(file_bytes)
+    meta = {"file_name": _safe_filename(file_name), "created": time.time()}
+    (_downloads_dir() / f"{token}.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+    return token
+
+
+def pop_download(token: str) -> tuple[bytes, str] | None:
+    token = re.sub(r"[^a-f0-9]", "", (token or "").lower())
+    if len(token) < 16:
+        return None
+    path = _downloads_dir() / f"{token}.pptx"
+    meta_path = _downloads_dir() / f"{token}.json"
+    if not path.exists():
+        return None
+    name = "report.pptx"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            name = meta.get("file_name") or name
+        except Exception:
+            pass
+    data = path.read_bytes()
+    return data, name
+
+
 def send_file_bytes(chat_id: str, file_bytes: bytes, file_name: str, caption: str = "") -> dict:
     """يرسل ملفاً عبر sendFileByUpload (multipart)."""
-    import uuid
+    file_name = _safe_filename(file_name)
+    size_mb = len(file_bytes) / (1024 * 1024)
+    if size_mb > 95:
+        raise RuntimeError(f"الملف كبير جداً للإرسال عبر واتساب ({size_mb:.1f} MB). استخدم رابط التحميل.")
 
     boundary = f"----moth{uuid.uuid4().hex}"
     parts: list[bytes] = []
@@ -176,14 +247,14 @@ def send_file_bytes(chat_id: str, file_bytes: bytes, file_name: str, caption: st
 
     add_field("chatId", chat_id)
     if caption:
-        add_field("caption", caption)
+        add_field("caption", caption[:1000])
     add_field("fileName", file_name)
 
     parts.append(
         (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{file_name}"\r\n'
-            f"Content-Type: application/octet-stream\r\n\r\n"
+            f"Content-Type: application/vnd.openxmlformats-officedocument.presentationml.presentation\r\n\r\n"
         ).encode("utf-8")
     )
     parts.append(file_bytes)
@@ -197,12 +268,14 @@ def send_file_bytes(chat_id: str, file_bytes: bytes, file_name: str, caption: st
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:400]
         raise RuntimeError(f"Green API upload HTTP {e.code}: {detail}") from e
+    except Exception as e:
+        raise RuntimeError(f"فشل رفع الملف ({size_mb:.1f} MB): {e}") from e
 
 
 def download_url_bytes(url: str) -> bytes:
@@ -575,22 +648,42 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "action": "unknown_cmd"}
 
 
+def _public_base_url() -> str:
+    return (
+        os.environ.get("PUBLIC_BASE_URL")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or ""
+    ).rstrip("/")
+
+
 def _parse_notes_and_send(chat_id: str, phone: str, raw_text: str) -> dict[str, Any]:
-    send_text(chat_id, "جاري تحليل الملاحظات عبر Gemini وتعبئة الشريحة الأولى…")
-    try:
-        import ai_parse
-
-        parsed = ai_parse.parse_report_text(raw_text, prefer_gemini=True)
-    except Exception as e:
-        send_text(chat_id, f"فشل تحليل النص: {e}\nأعد إرسال الملاحظات.")
-        return {"ok": False, "error": str(e)}
-
-    return _build_and_send_report(
+    """يشغّل التحليل والإرسال في خيط خلفي حتى لا ينقطع Webhook."""
+    send_text(
         chat_id,
-        phone,
-        cover_override=parsed.get("cover") or {},
-        observations=parsed.get("observations") or [],
+        "جاري تحليل الملاحظات عبر Gemini وتعبئة الشريحة الأولى…\n"
+        "هذا قد يأخذ دقيقة أو أكثر مع كثرة الصور — لا ترسل شيء الآن.",
     )
+
+    def job() -> None:
+        try:
+            import ai_parse
+
+            parsed = ai_parse.parse_report_text(raw_text, prefer_gemini=True)
+            _build_and_send_report(
+                chat_id,
+                phone,
+                cover_override=parsed.get("cover") or {},
+                observations=parsed.get("observations") or [],
+                base_url=_public_base_url(),
+            )
+        except Exception as e:
+            try:
+                send_text(chat_id, f"فشل التجهيز/الإرسال:\n{e}\nأعد إرسال الملاحظات أو اكتب: مسح")
+            except Exception:
+                pass
+
+    threading.Thread(target=job, name="wa-build-send", daemon=True).start()
+    return {"ok": True, "action": "queued_build"}
 
 
 def _build_and_send_report(
@@ -598,6 +691,7 @@ def _build_and_send_report(
     phone: str,
     cover_override: dict[str, str] | None = None,
     observations: list[str] | None = None,
+    base_url: str = "",
 ) -> dict[str, Any]:
     photos = inbox_photos(phone)
     if not photos:
@@ -632,9 +726,13 @@ def _build_and_send_report(
             cover["engineer"] = user.display_name
 
         obs = observations if observations is not None else (data.get("observations") or [])
-        wa_blobs = [(b, e) for b, e, _n in photos]
 
-        # صور واتساب + بيانات الغلاف/الملاحظات من Gemini
+        send_text(chat_id, f"جاري ضغط {len(photos)} صورة وتجهيز العرض…")
+        wa_blobs: list[tuple[bytes, str]] = []
+        for b, e, _n in photos:
+            cb, ce = _compress_photo_blob(b, e)
+            wa_blobs.append((cb, ce))
+
         save_report(
             path,
             cover,
@@ -644,23 +742,55 @@ def _build_and_send_report(
         )
 
         file_bytes = Path(path).read_bytes()
-        school = (cover.get("school") or "مدرسة").strip() or "مدرسة"
-        eng = (cover.get("engineer") or user.display_name or "مهندس").strip()
+        size_mb = len(file_bytes) / (1024 * 1024)
+        school = (cover.get("school") or "madrasa").strip() or "madrasa"
+        eng = (cover.get("engineer") or user.display_name or "engineer").strip()
         date = (cover.get("date") or today_date_str()).replace("/", "-")
-        fname = f"{school}_{eng}_{date}.pptx".replace(" ", "_")
+        # اسم عربي للعرض للمستخدم + اسم آمن للرفع
+        display_name = f"{school}_{eng}_{date}.pptx".replace(" ", "_")
+        upload_name = _safe_filename(f"report_{date}.pptx")
+
+        token = store_download(file_bytes, display_name)
+        link = f"{base_url}/api/whatsapp/download/{token}" if base_url else ""
 
         send_text(
             chat_id,
-            f"جاري إرسال العرض…\n{len(wa_blobs)} صورة · {len(obs)} ملاحظة",
+            f"العرض جاهز ({len(wa_blobs)} صورة · {len(obs)} ملاحظة · {size_mb:.1f} MB)\n"
+            "جاري رفعه على واتساب…",
         )
-        send_file_bytes(
-            chat_id,
-            file_bytes,
-            fname,
-            caption=f"التقرير جاهز ✅\n{school}\n{date}",
-        )
+
+        try:
+            send_file_bytes(
+                chat_id,
+                file_bytes,
+                upload_name,
+                caption=f"التقرير جاهز ✅\n{school}\n{date}",
+            )
+            send_text(chat_id, "تم إرسال ملف العرض على واتساب ✅")
+        except Exception as upload_err:
+            msg = f"تعذر رفع الملف على واتساب:\n{upload_err}"
+            if link:
+                msg += f"\n\nحمّله من هنا:\n{link}"
+            else:
+                msg += "\n\nافتح الموقع من المتصفح ونزّل التقرير من مساحتك."
+            send_text(chat_id, msg)
+            # لا نمسح الصندوق إن فشل الرفع حتى يقدر يعيد المحاولة؟ نمسح بعد حفظ الرابط
+            inbox_clear(phone)
+            return {
+                "ok": False,
+                "error": str(upload_err),
+                "download": link,
+                "action": "download_fallback",
+            }
+
+        if link:
+            send_text(chat_id, f"رابط تحميل احتياطي:\n{link}")
+
         inbox_clear(phone)
-        return {"ok": True, "action": "sent", "photos": len(wa_blobs), "file": fname}
+        return {"ok": True, "action": "sent", "photos": len(wa_blobs), "file": display_name}
     except Exception as e:
-        send_text(chat_id, f"حدث خطأ أثناء تجهيز الملف:\n{e}")
+        try:
+            send_text(chat_id, f"حدث خطأ أثناء تجهيز الملف:\n{e}")
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
