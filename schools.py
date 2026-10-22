@@ -30,7 +30,38 @@ SCHOOLS: list[dict[str, str]] = [
     {"name": "ابتدائية عدي بن حاتم", "ministry": "61216"},
 ]
 
+# أسماء المهندسين الثابتة. الخيار الأخير في المحادثة = كتابة اسم آخر.
+ENGINEERS: list[str] = [
+    "بندر يحيى",
+    "ضاوي الشريف",
+]
+
 _AR_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+
+def engineer_list_text() -> str:
+    lines = ["من المهندس؟ أرسل الرقم فقط:"]
+    for i, name in enumerate(ENGINEERS, start=1):
+        lines.append(f"{i}. {name}")
+    lines.append(f"{len(ENGINEERS) + 1}. آخر (بعدها اكتب الاسم)")
+    return "\n".join(lines)
+
+
+def lookup_engineer_choice(text: str) -> str | None:
+    """
+    يعيد اسم المهندس، أو العلامة __other__ إذا اختار «آخر».
+    يعيد None إذا لم يكن الخيار رقماً صالحاً.
+    """
+    raw = (text or "").strip().translate(_AR_DIGITS)
+    raw = re.sub(r"^(?:رقم|مهندس)\s*", "", raw).strip()
+    if not re.fullmatch(r"\d{1,2}", raw):
+        return None
+    n = int(raw)
+    if 1 <= n <= len(ENGINEERS):
+        return ENGINEERS[n - 1]
+    if n == len(ENGINEERS) + 1:
+        return "__other__"
+    return None
 
 
 def school_list_text() -> str:

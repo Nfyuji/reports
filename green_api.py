@@ -461,8 +461,8 @@ def _watchdog_tick() -> None:
 HELP_TEXT = (
     "أوامر واتساب للتقرير:\n"
     "• أرسل كل الصور دفعة واحدة (بعد دقيقة أسأل إن اكتملت)\n"
-    "• ايوه → أرسل رقم المدرسة من القائمة (يُعبّأ الاسم والرقم الوزاري تلقائياً)\n"
-    "• ثم أرسل الملاحظات → يصل العرض جاهز\n"
+    "• ايوه → رقم المدرسة → رقم المهندس (1 أو 2 أو آخر) → الملاحظات\n"
+    "• ثم يصل العرض جاهز باسم المهندس والمدرسة والتاريخ\n"
     "• مسح / عدد / مساعدة"
 )
 
@@ -502,7 +502,7 @@ def _confirm_prompt(n: int) -> str:
     return (
         f"وصلتني {n} صورة ✅\n"
         f"هل هذه كلها؟\n"
-        f"• اكتب: ايوه → أرسل رقم المدرسة من القائمة ثم الملاحظات\n"
+        f"• اكتب: ايوه → رقم المدرسة ثم رقم المهندس ثم الملاحظات\n"
         f"• أو كمّل إرسال صور (بانتظار دقيقة بعد آخر صورة)\n"
         f"• اكتب: مسح → أبدأ من جديد"
     )
@@ -514,9 +514,15 @@ def _school_prompt() -> str:
     return "تمام ✅\n" + school_list_text()
 
 
-def _notes_prompt(school: str, ministry: str) -> str:
+def _engineer_prompt(school: str) -> str:
+    from schools import engineer_list_text
+
+    return f"تم: {school}\n\n" + engineer_list_text()
+
+
+def _notes_prompt(school: str, ministry: str, engineer: str) -> str:
     return (
-        f"تم ✅\nالمدرسة: {school}\nالرقم الوزاري: {ministry}\n\n"
+        f"تم ✅\nالمهندس: {engineer}\nالمدرسة: {school}\nالرقم الوزاري: {ministry}\n\n"
         "أرسل الآن *الملاحظات* (نص الملاحظات فقط).\n"
         "راح أرتّبها عبر Gemini وأعبّي الشريحة الأولى ثم أرسل لك العرض."
     )
@@ -675,13 +681,46 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "error": "bad_school_no"}
         session_set(
             phone,
-            stage="await_notes",
+            stage="await_engineer",
             chat_id=chat_id,
             school=found["name"],
             ministry_no=found["ministry"],
+            engineer="",
         )
-        send_text(chat_id, _notes_prompt(found["name"], found["ministry"]))
+        send_text(chat_id, _engineer_prompt(found["name"]))
         return {"ok": True, "action": "school_picked", "school_no": found["no"]}
+
+    if stage == "await_engineer":
+        from schools import ENGINEERS, lookup_engineer_choice
+
+        choice = lookup_engineer_choice(text)
+        if choice is None:
+            send_text(
+                chat_id,
+                f"أرسل رقم المهندس من 1 إلى {len(ENGINEERS) + 1}.\n"
+                "1 بندر يحيى · 2 ضاوي الشريف · 3 آخر",
+            )
+            return {"ok": False, "error": "bad_engineer_no"}
+        if choice == "__other__":
+            session_set(phone, stage="await_engineer_name", chat_id=chat_id)
+            send_text(chat_id, "اكتب اسم المهندس الآن.")
+            return {"ok": True, "action": "ask_engineer_name"}
+        school = (sess.get("school") or "").strip()
+        ministry = (sess.get("ministry_no") or "").strip()
+        session_set(phone, stage="await_notes", chat_id=chat_id, engineer=choice)
+        send_text(chat_id, _notes_prompt(school, ministry, choice))
+        return {"ok": True, "action": "engineer_picked", "engineer": choice}
+
+    if stage == "await_engineer_name":
+        name = text.strip()
+        if len(name) < 2:
+            send_text(chat_id, "الاسم قصير. اكتب اسم المهندس كاملاً.")
+            return {"ok": False, "error": "engineer_short"}
+        school = (sess.get("school") or "").strip()
+        ministry = (sess.get("ministry_no") or "").strip()
+        session_set(phone, stage="await_notes", chat_id=chat_id, engineer=name)
+        send_text(chat_id, _notes_prompt(school, ministry, name))
+        return {"ok": True, "action": "engineer_typed", "engineer": name}
 
     # مرحلة الملاحظات: Gemini يرتّب الملاحظات + نثبت المدرسة/الرقم الوزاري من المحادثة
     if stage == "await_notes":
@@ -712,6 +751,7 @@ def _parse_notes_and_send(chat_id: str, phone: str, raw_text: str) -> dict[str, 
     sess = session_get(phone)
     school = (sess.get("school") or "").strip()
     ministry = (sess.get("ministry_no") or "").strip()
+    engineer = (sess.get("engineer") or "").strip()
     send_text(
         chat_id,
         "جاري تحليل الملاحظات عبر Gemini وتعبئة الشريحة الأولى…\n"
@@ -729,6 +769,8 @@ def _parse_notes_and_send(chat_id: str, phone: str, raw_text: str) -> dict[str, 
                 cover["school"] = school
             if ministry:
                 cover["ministry_no"] = ministry
+            if engineer:
+                cover["engineer"] = engineer
             _build_and_send_report(
                 chat_id,
                 phone,
