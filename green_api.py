@@ -460,8 +460,8 @@ def _watchdog_tick() -> None:
 HELP_TEXT = (
     "أوامر واتساب للتقرير:\n"
     "• أرسل كل الصور دفعة واحدة (بعد دقيقة أسأل إن اكتملت)\n"
-    "• ايوه → أطلب اسم المدرسة → الرقم الوزاري → الملاحظات\n"
-    "• ثم أجهّز العرض (Times New Roman 36) وأرسله لك\n"
+    "• ايوه → أرسل رقم المدرسة من القائمة (يُعبّأ الاسم والرقم الوزاري تلقائياً)\n"
+    "• ثم أرسل الملاحظات → يصل العرض جاهز\n"
     "• مسح / عدد / مساعدة"
 )
 
@@ -501,18 +501,16 @@ def _confirm_prompt(n: int) -> str:
     return (
         f"وصلتني {n} صورة ✅\n"
         f"هل هذه كلها؟\n"
-        f"• اكتب: ايوه → أطلب اسم المدرسة ثم الرقم الوزاري ثم الملاحظات\n"
+        f"• اكتب: ايوه → أرسل رقم المدرسة من القائمة ثم الملاحظات\n"
         f"• أو كمّل إرسال صور (بانتظار دقيقة بعد آخر صورة)\n"
         f"• اكتب: مسح → أبدأ من جديد"
     )
 
 
 def _school_prompt() -> str:
-    return "تمام ✅\nأرسل الآن *اسم المدرسة* فقط."
+    from schools import school_list_text
 
-
-def _ministry_prompt(school: str) -> str:
-    return f"تم: {school}\nالآن أرسل *الرقم الوزاري* فقط."
+    return "تمام ✅\n" + school_list_text()
 
 
 def _notes_prompt(school: str, ministry: str) -> str:
@@ -648,7 +646,7 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         )
         return {"ok": True, "action": "continue"}
 
-    # موافقة → اطلب اسم المدرسة أولاً
+    # موافقة → اطلب رقم المدرسة من القائمة
     if low in _YES or low.replace(" ", "") in _YES:
         if inbox_count(phone) <= 0:
             send_text(chat_id, "ما عندي صور بعد. أرسل الصور أولاً.")
@@ -665,29 +663,24 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "action": "ask_school"}
 
     if stage == "await_school":
-        school = text.strip()
-        if len(school) < 2:
-            send_text(chat_id, "اسم المدرسة قصير جداً. أعد إرساله.")
-            return {"ok": False, "error": "school_short"}
-        session_set(phone, stage="await_ministry", chat_id=chat_id, school=school)
-        send_text(chat_id, _ministry_prompt(school))
-        return {"ok": True, "action": "ask_ministry"}
+        from schools import SCHOOLS, lookup_school_number
 
-    if stage == "await_ministry":
-        ministry = text.strip()
-        if len(ministry) < 2:
-            send_text(chat_id, "الرقم الوزاري قصير جداً. أعد إرساله.")
-            return {"ok": False, "error": "ministry_short"}
-        school = (sess.get("school") or "").strip()
+        found = lookup_school_number(text)
+        if not found:
+            send_text(
+                chat_id,
+                f"أرسل رقم المدرسة فقط من 1 إلى {len(SCHOOLS)}.\nمثال: 7",
+            )
+            return {"ok": False, "error": "bad_school_no"}
         session_set(
             phone,
             stage="await_notes",
             chat_id=chat_id,
-            school=school,
-            ministry_no=ministry,
+            school=found["name"],
+            ministry_no=found["ministry"],
         )
-        send_text(chat_id, _notes_prompt(school, ministry))
-        return {"ok": True, "action": "ask_notes"}
+        send_text(chat_id, _notes_prompt(found["name"], found["ministry"]))
+        return {"ok": True, "action": "school_picked", "school_no": found["no"]}
 
     # مرحلة الملاحظات: Gemini يرتّب الملاحظات + نثبت المدرسة/الرقم الوزاري من المحادثة
     if stage == "await_notes":
