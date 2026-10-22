@@ -117,25 +117,23 @@ def chat_id_to_phone(chat_id: str) -> str:
     return normalize_phone((chat_id or "").split("@")[0])
 
 
-def allowed_phones() -> list[str]:
-    """قائمة الأرقام المسموح الرد عليها (مفصولة بفاصلة أو مسافة)."""
-    raw = _cfg()["allowed_phone"] or ""
-    parts = re.split(r"[,;\s]+", raw)
-    out: list[str] = []
-    for part in parts:
-        phone = normalize_phone(part)
-        if phone and phone not in out:
-            out.append(phone)
-    return out
-
-
-def format_allowed_phones(raw: str) -> str:
+def _split_phone_list(raw: str) -> list[str]:
+    """يفصل الأرقام بفاصلة أو سطر جديد، ويبقي المسافات داخل الرقم (+966 55 ...)."""
     phones: list[str] = []
-    for part in re.split(r"[,;\s]+", raw or ""):
+    for part in re.split(r"[,;\n]+", raw or ""):
         phone = normalize_phone(part)
         if phone and phone not in phones:
             phones.append(phone)
-    return ",".join(phones)
+    return phones
+
+
+def allowed_phones() -> list[str]:
+    """قائمة الأرقام المسموح الرد عليها."""
+    return _split_phone_list(_cfg()["allowed_phone"] or "")
+
+
+def format_allowed_phones(raw: str) -> str:
+    return ",".join(_split_phone_list(raw))
 
 
 def is_allowed_sender(chat_id: str) -> bool:
