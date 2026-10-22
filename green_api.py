@@ -178,15 +178,16 @@ def send_text(chat_id: str, message: str) -> dict:
 
 
 def _safe_filename(name: str) -> str:
-    """اسم ملف ASCII فقط للرفع عبر Green API."""
+    """اسم ملف يحافظ على العربي: الشخص_المدرسة_التاريخ.pptx"""
     base = (name or "report.pptx").strip() or "report.pptx"
+    base = re.sub(r'[\\/:*?"<>|\r\n\t]+', " ", base)
+    base = "_".join(base.split())
+    base = re.sub(r"_+", "_", base).strip("._") or "report"
     if not base.lower().endswith(".pptx"):
-        base = f"{base}.pptx"
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
-    cleaned = cleaned.strip("._") or "report.pptx"
-    if not cleaned.lower().endswith(".pptx"):
-        cleaned += ".pptx"
-    return cleaned[:120]
+        base += ".pptx"
+    if len(base) > 180:
+        base = base[:176].rstrip("._") + ".pptx"
+    return base
 
 
 def _compress_photo_blob(blob: bytes, ext: str, max_side: int = 1280, quality: int = 72) -> tuple[bytes, str]:
@@ -802,12 +803,10 @@ def _build_and_send_report(
 
         file_bytes = Path(path).read_bytes()
         size_mb = len(file_bytes) / (1024 * 1024)
-        school = (cover.get("school") or "madrasa").strip() or "madrasa"
-        eng = (cover.get("engineer") or user.display_name or "engineer").strip()
+        school = (cover.get("school") or "مدرسة").strip() or "مدرسة"
+        person = (cover.get("engineer") or user.display_name or "مشرف").strip()
         date = (cover.get("date") or today_date_str()).replace("/", "-")
-        # اسم عربي للعرض للمستخدم + اسم آمن للرفع
-        display_name = f"{school}_{eng}_{date}.pptx".replace(" ", "_")
-        upload_name = _safe_filename(f"report_{date}.pptx")
+        display_name = _safe_filename(f"{person}_{school}_{date}.pptx")
 
         token = store_download(file_bytes, display_name)
         link = f"{base_url}/api/whatsapp/download/{token}" if base_url else ""
@@ -822,8 +821,8 @@ def _build_and_send_report(
             send_file_bytes(
                 chat_id,
                 file_bytes,
-                upload_name,
-                caption=f"التقرير جاهز ✅\n{school}\n{date}",
+                display_name,
+                caption=f"التقرير جاهز ✅\n{person}\n{school}\n{date}",
             )
             send_text(chat_id, "تم إرسال ملف العرض على واتساب ✅")
         except Exception as upload_err:

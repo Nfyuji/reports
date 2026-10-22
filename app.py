@@ -407,7 +407,7 @@ def _safe_filename_part(text: str, fallback: str = "") -> str:
 
 
 def _download_filename(user: auth_store.User, path: Path) -> str:
-    """اسم التنزيل: المدرسة_الشخص_التاريخ.pptx"""
+    """اسم التنزيل: الشخص_المدرسة_التاريخ.pptx"""
     school = ""
     person = user.display_name or ""
     date = today_date_str()
@@ -425,7 +425,7 @@ def _download_filename(user: auth_store.User, path: Path) -> str:
         (date or today_date_str()).replace("/", "-").replace("\\", "-"),
         today_date_str().replace("/", "-"),
     )
-    return f"{school}_{person}_{date}.pptx"
+    return f"{person}_{school}_{date}.pptx"
 
 
 @app.route("/api/download", methods=["GET"])
@@ -803,7 +803,7 @@ def api_whatsapp_webhook():
                 "service": "moth-whatsapp-webhook",
                 "configured": green_api.is_configured(),
                 "allowed_count": len(green_api.allowed_phones()),
-                "build": "wa-schools-1",
+                "build": "wa-filename-1",
             }
         )
 
