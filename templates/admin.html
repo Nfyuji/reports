@@ -151,8 +151,8 @@
           <input id="waMediaUrl" type="text" value="{{ wa.media_url if wa else '' }}" placeholder="https://7107.api.greenapi.com" />
         </label>
         <label class="field">
-          <span>الرقم المسموح فقط (من يرسل الصور)</span>
-          <input id="waPhone" type="text" value="{{ wa.allowed_phone if wa else '' }}" placeholder="مثال: 96714705660" />
+          <span>الأرقام المسموح الرد عليها (افصل بفاصلة)</span>
+          <input id="waPhone" type="text" value="{{ wa.allowed_phone if wa else '' }}" placeholder="967714705660,966551536001" />
         </label>
         <label class="field">
           <span>اربط بمستخدم النظام (ID)</span>

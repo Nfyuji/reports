@@ -802,6 +802,7 @@ def api_whatsapp_webhook():
                 "ok": True,
                 "service": "moth-whatsapp-webhook",
                 "configured": green_api.is_configured(),
+                "allowed_count": len(green_api.allowed_phones()),
             }
         )
 

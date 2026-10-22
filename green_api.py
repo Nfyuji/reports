@@ -63,7 +63,7 @@ def save_config(
     # إن تُرك التوكن فارغاً مع keep_token نُبقي المحفوظ سابقاً
     if api_token or not keep_token:
         auth_store.set_setting("green_api_token", api_token)
-    auth_store.set_setting("green_allowed_phone", normalize_phone(allowed_phone))
+    auth_store.set_setting("green_allowed_phone", format_allowed_phones(allowed_phone))
     auth_store.set_setting("green_user_id", str(user_id or "").strip())
     if api_url:
         auth_store.set_setting("green_api_url", api_url.rstrip("/"))
@@ -117,11 +117,32 @@ def chat_id_to_phone(chat_id: str) -> str:
     return normalize_phone((chat_id or "").split("@")[0])
 
 
+def allowed_phones() -> list[str]:
+    """قائمة الأرقام المسموح الرد عليها (مفصولة بفاصلة أو مسافة)."""
+    raw = _cfg()["allowed_phone"] or ""
+    parts = re.split(r"[,;\s]+", raw)
+    out: list[str] = []
+    for part in parts:
+        phone = normalize_phone(part)
+        if phone and phone not in out:
+            out.append(phone)
+    return out
+
+
+def format_allowed_phones(raw: str) -> str:
+    phones: list[str] = []
+    for part in re.split(r"[,;\s]+", raw or ""):
+        phone = normalize_phone(part)
+        if phone and phone not in phones:
+            phones.append(phone)
+    return ",".join(phones)
+
+
 def is_allowed_sender(chat_id: str) -> bool:
-    allowed = normalize_phone(_cfg()["allowed_phone"])
-    if not allowed:
+    sender = chat_id_to_phone(chat_id)
+    if not sender:
         return False
-    return chat_id_to_phone(chat_id) == allowed
+    return sender in allowed_phones()
 
 
 def _api_url(method: str) -> str:
