@@ -676,9 +676,20 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         if not found:
             send_text(
                 chat_id,
-                f"أرسل رقم المدرسة فقط من 1 إلى {len(SCHOOLS)}.\nمثال: 7",
+                f"أرسل رقم المدرسة من 1 إلى {len(SCHOOLS)}، أو {len(SCHOOLS) + 1} / آخر لمدرسة غير موجودة.",
             )
             return {"ok": False, "error": "bad_school_no"}
+        if found["no"] == "__other__":
+            session_set(
+                phone,
+                stage="await_school_name",
+                chat_id=chat_id,
+                school="",
+                ministry_no="",
+                engineer="",
+            )
+            send_text(chat_id, "المدرسة غير موجودة في القائمة.\nأرسل الآن *اسم المدرسة* كاملاً.")
+            return {"ok": True, "action": "ask_school_name"}
         session_set(
             phone,
             stage="await_engineer",
@@ -689,6 +700,33 @@ def handle_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         )
         send_text(chat_id, _engineer_prompt(found["name"]))
         return {"ok": True, "action": "school_picked", "school_no": found["no"]}
+
+    if stage == "await_school_name":
+        school = text.strip()
+        if len(school) < 2:
+            send_text(chat_id, "اسم المدرسة قصير. أعد إرساله كاملاً.")
+            return {"ok": False, "error": "school_short"}
+        session_set(phone, stage="await_ministry", chat_id=chat_id, school=school)
+        send_text(chat_id, f"تم: {school}\nالآن أرسل *الرقم الوزاري* فقط.")
+        return {"ok": True, "action": "ask_ministry"}
+
+    if stage == "await_ministry":
+        ministry = text.strip()
+        ministry = re.sub(r"\s+", "", ministry)
+        if len(ministry) < 2:
+            send_text(chat_id, "الرقم الوزاري قصير. أعد إرساله.")
+            return {"ok": False, "error": "ministry_short"}
+        school = (sess.get("school") or "").strip()
+        session_set(
+            phone,
+            stage="await_engineer",
+            chat_id=chat_id,
+            school=school,
+            ministry_no=ministry,
+            engineer="",
+        )
+        send_text(chat_id, _engineer_prompt(school))
+        return {"ok": True, "action": "ministry_set"}
 
     if stage == "await_engineer":
         from schools import ENGINEERS, lookup_engineer_choice

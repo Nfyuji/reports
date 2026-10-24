@@ -65,16 +65,20 @@ def lookup_engineer_choice(text: str) -> str | None:
 
 
 def school_list_text() -> str:
-    lines = ["أرسل *رقم المدرسة* فقط من القائمة:"]
+    lines = ["أرسل *رقم المدرسة* من القائمة، أو اكتب *آخر* إن ما كانت موجودة:"]
     for i, s in enumerate(SCHOOLS, start=1):
         lines.append(f"{i}. {s['name']}")
+    lines.append(f"{len(SCHOOLS) + 1}. آخر (أدخل الاسم والرقم الوزاري)")
     return "\n".join(lines)
 
 
 def lookup_school_number(text: str) -> dict[str, str] | None:
-    """يعيد المدرسة إن كان النص رقماً من 1 إلى آخر القائمة."""
+    """يعيد المدرسة، أو {"no":"__other__"} إن اختار مدرسة غير موجودة."""
     raw = (text or "").strip().translate(_AR_DIGITS)
     raw = raw.replace("#", "").strip()
+    raw_norm = raw.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ة", "ه")
+    if raw_norm.lower() in {"اخر", "اخرى", "other", "جديد"}:
+        return {"no": "__other__", "name": "", "ministry": ""}
     raw = re.sub(r"^(?:رقم|مدرسه|المدرسه)\s*", "", raw).strip()
     if not re.fullmatch(r"\d{1,2}", raw):
         return None
@@ -83,4 +87,6 @@ def lookup_school_number(text: str) -> dict[str, str] | None:
         item = dict(SCHOOLS[n - 1])
         item["no"] = str(n)
         return item
+    if n == len(SCHOOLS) + 1:
+        return {"no": "__other__", "name": "", "ministry": ""}
     return None

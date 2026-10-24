@@ -803,7 +803,7 @@ def api_whatsapp_webhook():
                 "service": "moth-whatsapp-webhook",
                 "configured": green_api.is_configured(),
                 "allowed_count": len(green_api.allowed_phones()),
-                "build": "wa-engineer-1",
+                "build": "wa-school-other-1",
             }
         )
 
